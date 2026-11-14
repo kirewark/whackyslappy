@@ -57,7 +57,7 @@ _Project/
 
 - Never commit `Library/`, `Temp/`, `Logs/`, `obj/`, `UserSettings/`, `Build/`, or `Builds/`. The `.gitignore` covers them.
 - `git-lfs` is **not** installed on the agent host. Do not add binary files that match `.gitattributes` LFS patterns until LFS is set up.
-- Commit author: `Kire Wark <kirewark@users.noreply.github.com>`.
+- Commit author: `Kire Wark <200969737+kirewark@users.noreply.github.com>`.
 - Use Conventional Commits: `feat:`, `fix:`, `docs:`, `chore:`, `ci:`.
 - Never force-push or rewrite history without explicit approval from the user.
 - Never put tokens or secrets in files, remote URLs, or commit messages.
