@@ -6,7 +6,7 @@ Read this file before you change the repo. Read `Design.md` for the game design.
 
 - **WhackySlappy** is a silly first-person game. The player slaps goofy cartoon NPCs, and the NPCs fly away with physics.
 - This repo is **public** and is a portfolio piece. Keep commits, code, and docs clean.
-- Current phase: **core gameplay prototype** (FPS movement, slap melee weapon, NPC physics). Do not add progression, scoring depth, menus, or art polish until the user asks.
+- Current phase: **core gameplay prototype** (FPS movement, slap melee weapon, NPC physics). Do not add scoring, progression, menus, or art polish until the user asks. `Design.md` section 1 lists what is out of scope.
 
 ## Facts
 
