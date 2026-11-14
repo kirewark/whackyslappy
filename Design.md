@@ -136,13 +136,13 @@ No explicit win condition for the prototype. The game runs as an **endless slap 
 
 ## 8. Technical Specs
 
-- **Unity version:** 6.x (LTS)
-- **Render pipeline:** Built-in (simpler for WebGL, faster iteration) or URP
+- **Unity version:** 6000.1.0f1 (Unity 6)
+- **Render pipeline:** Built-in (no URP package installed; simpler for WebGL)
 - **Target:** WebGL, Chrome/Firefox/Edge
 - **Build target:** WebGL 2.0
 - **Max build size target:** <50MB for initial load
 - **Physics:** Unity PhysX, standard settings
-- **Input:** Unity Input System (new) or legacy (prototype can use legacy, switch later)
+- **Input:** Unity Input System 1.14 only (`activeInputHandler: 1`). The legacy `Input` class is disabled and will throw errors.
 
 ---
 
