@@ -5,7 +5,6 @@ namespace WhackySlappy.Core
     /// <summary>
     /// Draws a simple dot crosshair in the center of the screen using OnGUI.
     /// </summary>
-    [RequireComponent(typeof(Camera))]
     public class Crosshair : MonoBehaviour
     {
         [SerializeField] private float m_dotSize = 4f;
