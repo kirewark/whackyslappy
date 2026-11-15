@@ -86,7 +86,7 @@ namespace WhackySlappy.Slap
                 foreach (var kvp in hitPoints)
                 {
                     var rb = kvp.Key.attachedRigidbody;
-                    if (rb == null || !m_hitThisSwing.Add(kvp.Key))
+                    if (rb == null || !m_hitThisSwing.Add(rb))
                         continue;
 
                     var handVelocity = delta / Time.fixedDeltaTime;
