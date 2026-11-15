@@ -22,11 +22,37 @@ namespace WhackySlappy.Core
 
             var arenaRoot = new GameObject("ArenaRoot");
 
-            CreateFloor(arenaRoot);
-            CreatePlayerBlockerWalls(arenaRoot);
-            EnsureDirectionalLight();
-            CreatePlayer(arenaRoot);
-            EnsureCrosshairOnRoot(arenaRoot);
+            // Run each step alone. If one step fails, log it and continue.
+            RunStep("CreateFloor", () => CreateFloor(arenaRoot));
+            RunStep("CreatePlayerBlockerWalls", () => CreatePlayerBlockerWalls(arenaRoot));
+            RunStep("EnsureDirectionalLight", EnsureDirectionalLight);
+            RunStep("CreatePlayer", () => CreatePlayer(arenaRoot));
+            RunStep("EnsureCrosshairOnRoot", () => EnsureCrosshairOnRoot(arenaRoot));
+            LogDiagnostics();
+        }
+
+        private static void RunStep(string name, System.Action step)
+        {
+            try { step(); }
+            catch (System.Exception e)
+            {
+                Debug.LogError("[GameBootstrap] Step " + name + " failed.");
+                Debug.LogException(e);
+            }
+        }
+
+        /// <summary>
+        /// Writes the arena state to the Console so that problems are easy to find.
+        /// </summary>
+        private static void LogDiagnostics()
+        {
+            var floor = GameObject.Find("Floor");
+            var player = GameObject.Find("Player");
+            var cam = Camera.main;
+            Debug.Log("[GameBootstrap] Floor=" + (floor != null ? floor.GetComponent<Collider>().bounds.ToString() : "MISSING")
+                + " Player=" + (player != null ? player.transform.position + " fwd=" + player.transform.forward : "MISSING")
+                + " Camera=" + (cam != null ? cam.name + " fwd=" + cam.transform.forward + " parent=" + (cam.transform.parent != null ? cam.transform.parent.name : "none") : "MISSING")
+                + " CameraCount=" + Camera.allCamerasCount);
         }
 
         /// <summary>
@@ -38,8 +64,8 @@ namespace WhackySlappy.Core
             floorObj.name = "Floor";
             floorObj.transform.SetParent(parent.transform, false);
             floorObj.layer = GameLayers.Environment;
-            floorObj.transform.localScale = new Vector3(FloorSize, 0.2f, FloorSize);
-            floorObj.transform.position = new Vector3(0, -0.1f, 0);
+            floorObj.transform.localScale = new Vector3(FloorSize, 1f, FloorSize);
+            floorObj.transform.position = new Vector3(0, -0.5f, 0);
 
             // Checker texture: 2x2 pixels, point filter, repeat wrap, tiled 10x10.
             var tex = new Texture2D(2, 2, TextureFormat.RGB24, false);
@@ -51,14 +77,32 @@ namespace WhackySlappy.Core
             tex.SetPixel(1, 1, new Color(0.8f, 0.8f, 0.8f));
             tex.Apply();
 
-            var shader = Shader.Find("Standard");
-            if (shader == null) shader = Shader.Find("Diffuse");
-            var mat = new Material(shader);
+            // Copy the primitive's default material. Shader.Find can return null
+            // when a shader is not included in the build, so do not use it here.
+            var renderer = floorObj.GetComponent<MeshRenderer>();
+            var mat = new Material(renderer.sharedMaterial);
             mat.mainTexture = tex;
             mat.mainTextureScale = new Vector2(10f, 10f);
-
-            var renderer = floorObj.GetComponent<MeshRenderer>();
             renderer.material = mat;
+
+            // Orange edge strips (visual only) so the platform edge is easy to see.
+            var half = FloorSize * 0.5f;
+            Vector3[] edgePos = { new Vector3(0, 0.01f, half - 0.15f), new Vector3(0, 0.01f, -half + 0.15f),
+                                  new Vector3(half - 0.15f, 0.01f, 0), new Vector3(-half + 0.15f, 0.01f, 0) };
+            Vector3[] edgeScale = { new Vector3(FloorSize, 0.02f, 0.3f), new Vector3(FloorSize, 0.02f, 0.3f),
+                                    new Vector3(0.3f, 0.02f, FloorSize), new Vector3(0.3f, 0.02f, FloorSize) };
+            for (int i = 0; i < 4; i++)
+            {
+                var edge = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                edge.name = "FloorEdge" + i;
+                Object.Destroy(edge.GetComponent<Collider>());
+                edge.transform.SetParent(parent.transform, false);
+                edge.transform.position = edgePos[i];
+                edge.transform.localScale = edgeScale[i];
+                var edgeMat = new Material(renderer.sharedMaterial);
+                edgeMat.color = new Color(1f, 0.55f, 0.1f);
+                edge.GetComponent<MeshRenderer>().material = edgeMat;
+            }
         }
 
         /// <summary>

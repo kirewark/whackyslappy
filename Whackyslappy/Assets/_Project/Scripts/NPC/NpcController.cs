@@ -304,6 +304,7 @@ namespace WhackySlappy.NPC
 
         private void Despawn()
         {
+            Debug.Log("[NpcController] Despawn " + name + " at " + transform.position + " state=" + m_state);
             // Notify the spawner before destroying.
             if (m_spawner != null)
             {
@@ -349,7 +350,7 @@ namespace WhackySlappy.NPC
             body.transform.SetParent(go.transform, false);
             body.transform.localScale = new Vector3(0.7f, 0.8f, 0.7f);
             body.layer = GameLayers.NPC;
-            var bodyMat = new Material(Shader.Find("Standard"));
+            var bodyMat = new Material(body.GetComponent<Renderer>().sharedMaterial);
             bodyMat.color = new Color(Random.Range(0.3f, 1f), Random.Range(0.3f, 1f), Random.Range(0.3f, 1f));
             body.GetComponent<Renderer>().material = bodyMat;
 
@@ -359,7 +360,7 @@ namespace WhackySlappy.NPC
             head.transform.localPosition = new Vector3(0, 1f, 0);
             head.transform.localScale = new Vector3(0.6f, 0.6f, 0.6f);
             head.layer = GameLayers.NPC;
-            var headMat = new Material(Shader.Find("Standard"));
+            var headMat = new Material(head.GetComponent<Renderer>().sharedMaterial);
             headMat.color = new Color(Random.Range(0.3f, 1f), Random.Range(0.3f, 1f), Random.Range(0.3f, 1f));
             head.GetComponent<Renderer>().material = headMat;
 
