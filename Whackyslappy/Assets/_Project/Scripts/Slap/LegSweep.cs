@@ -23,7 +23,7 @@ namespace WhackySlappy.Slap
         [SerializeField] private float m_ankleHeight = 0.3f;   // cast height above the feet
         [SerializeField] private float m_radius = 0.4f;        // sweep sphere radius
         [SerializeField] private float m_range = 1.6f;         // arc cast distance
-        [SerializeField] private float m_sweepImpulse = 6f;    // tangential impulse to the feet
+        [SerializeField] private float m_sweepImpulse = 9f;    // tangential impulse to the feet (knockdown-strong)
         [SerializeField] private float m_upBias = 1.0f;        // small upward impulse component
         [SerializeField] private float m_strength = 0.7f;      // feedback scale for a sweep hit
 

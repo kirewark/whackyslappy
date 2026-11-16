@@ -77,13 +77,22 @@ namespace WhackySlappy.NPC
         // Sweep reaction tuning
         // -------------------------------------------------------------------------
 
-        /// <summary>Topple torque added about the axis perpendicular to the
-        /// sweep tangent when this NPC is tripped by a leg sweep.</summary>
-        [SerializeField] private float m_sweepTorque = 8f;
+        /// <summary>Topple torque added about the horizontal axis perpendicular
+        /// to the sweep tangent when this NPC is hit by a leg sweep. Strong
+        /// enough to pitch the body past 90 degrees so it lies flat over
+        /// rather than just wobbling.</summary>
+        [SerializeField] private float m_sweepTorque = 18f;
 
         /// <summary>Upward velocity (m/s) a sweep hit is clamped to, so a
         /// tripped NPC slides and falls instead of being launched far.</summary>
         [SerializeField] private float m_maxSweepUpVelocity = 3f;
+
+        /// <summary>Duration (s) after a sweep hit during which the NPC is
+        /// held down: self-righting is off (the NPC stays in Tumbling, which
+        /// is pure physics) and the GettingUp transition is blocked, so the
+        /// knocked-over body stays on the ground briefly. A second sweep
+        /// simply refreshes this window.</summary>
+        [SerializeField] private float m_knockdownTime = 1.6f;
 
         // -------------------------------------------------------------------------
         // Silly physics (Pass 2, Phase 4). All lerp endpoints for the feel
@@ -115,6 +124,9 @@ namespace WhackySlappy.NPC
         private float m_settleTimer = 0f;
         private float m_hitCooldownTimer = 0f;
         private float m_sweepCooldownTimer = 0f;
+        // Knockdown window: > 0 while a swept NPC must stay on the ground
+        // (self-righting suppressed, GettingUp transition blocked).
+        private float m_knockdownTimer = 0f;
         private Vector3 m_wanderTarget = Vector3.zero;
 
         // World half-height from the root pivot down to the feet, cached in
@@ -284,6 +296,11 @@ namespace WhackySlappy.NPC
             // Sweep cooldown countdown (separate timer, see m_sweepCooldown).
             if (m_sweepCooldownTimer > 0f)
                 m_sweepCooldownTimer -= Time.fixedDeltaTime;
+
+            // Knockdown window countdown. While it runs, Tumbling stays
+            // pure physics (no self-righting), so the body lies flat.
+            if (m_knockdownTimer > 0f)
+                m_knockdownTimer -= Time.fixedDeltaTime;
 
             // Out-of-arena kill check runs every tick regardless of state, so
             // an NPC sliding off the platform mid-Wander or mid-GettingUp
@@ -470,6 +487,11 @@ namespace WhackySlappy.NPC
             m_sweepCooldownTimer = m_sweepCooldown;
             m_state = State.Tumbling;
             m_settleTimer = 0f;
+
+            // Knockdown window: re-sweeping a downed NPC just refreshes the
+            // timer, so it stays held down for m_knockdownTime from the last
+            // hit. The upward clamp above keeps it a knockdown, not a launch.
+            m_knockdownTimer = m_knockdownTime;
 
             // Silly physics: a sweep gets the hang window and squash only.
             // No random-axis spin here — the trip already got its topple
@@ -673,6 +695,16 @@ namespace WhackySlappy.NPC
                 return;
             }
 
+            // Knockdown lockout: while a swept NPC is still held down, stay
+            // in Tumbling (pure physics, no self-righting torque is applied
+            // there) and do not let the settle timer accumulate, so the
+            // full m_knockdownTime passes before normal GettingUp recovery.
+            if (m_knockdownTimer > 0f)
+            {
+                m_settleTimer = 0f;
+                return;
+            }
+
             if (m_rb.linearVelocity.magnitude < m_settleSpeed)
             {
                 m_settleTimer += Time.fixedDeltaTime;
@@ -749,6 +781,7 @@ namespace WhackySlappy.NPC
             m_settleTimer = 0f;
             m_hitCooldownTimer = 0f;
             m_sweepCooldownTimer = 0f;
+            m_knockdownTimer = 0f;
             m_despawned = false;
             m_rb.linearVelocity = Vector3.zero;
             m_rb.angularVelocity = Vector3.zero;
