@@ -16,6 +16,11 @@ namespace WhackySlappy.Player
         private InputAction m_jumpAction;
         private InputAction m_sprintAction;
         private InputAction m_attackAction;
+        private InputAction m_sweepAction;
+
+        private Vector2 m_aimDelta;
+
+        [SerializeField, Min(1f)] private float m_maxAimMagnitude = 300f;
 
         /// <summary>
         /// Horizontal + vertical move input (-1 to 1), from WASD / left stick.
@@ -41,6 +46,50 @@ namespace WhackySlappy.Player
         /// True during the frame Attack is pressed.
         /// </summary>
         public bool AttackPressedThisFrame => m_attackAction != null && m_attackAction.WasPressedThisFrame();
+
+        /// <summary>
+        /// True during the frame the right mouse button (leg sweep) is pressed.
+        /// </summary>
+        public bool SweepPressed => m_sweepAction != null && m_sweepAction.WasPressedThisFrame();
+
+        /// <summary>
+        /// True while the left mouse button (slap) is held.
+        /// </summary>
+        public bool SlapHeld => m_attackAction != null && m_attackAction.IsPressed();
+
+        /// <summary>
+        /// True during the frame the left mouse button (slap) is pressed.
+        /// </summary>
+        public bool SlapPressed => m_attackAction != null && m_attackAction.WasPressedThisFrame();
+
+        /// <summary>
+        /// True during the frame the left mouse button (slap) is released.
+        /// </summary>
+        public bool SlapReleased => m_attackAction != null && m_attackAction.WasReleasedThisFrame();
+
+        /// <summary>
+        /// Mouse look delta accumulated in pixels while SlapHeld, clamped to
+        /// m_maxAimMagnitude. Reset by ResetAim or ConsumeAim.
+        /// </summary>
+        public Vector2 AimDelta => m_aimDelta;
+
+        /// <summary>
+        /// Clears the accumulated aim drag (call when a swing starts or is cancelled).
+        /// </summary>
+        public void ResetAim()
+        {
+            m_aimDelta = Vector2.zero;
+        }
+
+        /// <summary>
+        /// Returns the accumulated aim drag and clears it in one step.
+        /// </summary>
+        public Vector2 ConsumeAim()
+        {
+            Vector2 aim = m_aimDelta;
+            m_aimDelta = Vector2.zero;
+            return aim;
+        }
 
         private void Awake()
         {
@@ -69,6 +118,20 @@ namespace WhackySlappy.Player
             m_attackAction = m_map.AddAction("Attack", InputActionType.Button);
             m_attackAction.AddBinding("<Mouse>/leftButton");
             m_attackAction.AddBinding("<Gamepad>/buttonWest");
+
+            m_sweepAction = m_map.AddAction("Sweep", InputActionType.Button);
+            m_sweepAction.AddBinding("<Mouse>/rightButton");
+        }
+
+        private void Update()
+        {
+            if (!SlapHeld || m_lookAction == null)
+            {
+                return;
+            }
+
+            m_aimDelta += m_lookAction.ReadValue<Vector2>();
+            m_aimDelta = Vector2.ClampMagnitude(m_aimDelta, m_maxAimMagnitude);
         }
 
         private void OnEnable()
