@@ -1,53 +1,75 @@
-using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace WhackySlappy.NPC
 {
     /// <summary>
-    /// Maintains the Design.md NPC count alive. Spawns NPCs on start and respawns
-    /// them after they are destroyed (fall off the platform).
+    /// Keeps the NPC count under a hard cap: an initial burst of at most
+    /// m_initialBurst, then at most one replacement spawn per m_spawnInterval
+    /// tick while below m_maxAlive. The alive count is decremented on the
+    /// (deduplicated) despawn notification from NpcController.
     /// </summary>
     public class NpcSpawner : MonoBehaviour
     {
-        [SerializeField] private int m_targetCount = 5;
-        [SerializeField] private float m_respawnMinDelay = 2f;
-        [SerializeField] private float m_respawnMaxDelay = 4f;
+        /// <summary>Hard cap: the spawner never exceeds this alive count.</summary>
+        [SerializeField] private int m_maxAlive = 12;
+
+        /// <summary> NPCs spawned at Start (clamped to m_maxAlive).</summary>
+        [SerializeField] private int m_initialBurst = 6;
+
+        /// <summary>Seconds between replacement spawn ticks; one spawn max per tick.</summary>
+        [SerializeField] private float m_spawnInterval = 3f;
+
+        /// <summary>Minimum spawn distance from the player (m).</summary>
         [SerializeField] private float m_minSpawnDistance = 4f;
 
         private int m_activeCount = 0;
+        private float m_intervalTimer = 0f;
+
+        // NPCs currently alive and spawned by this spawner. Doubles as the
+        // dedupe set: NpcController.Despawn has no re-entry guard and its
+        // kill-height check can fire twice in the same FixedUpdate tick
+        // (CheckDespawn + CheckTransitionToGettingUp), so NotifyDespawn can
+        // be called repeatedly for one death. A spawn-per-death coroutine
+        // loop let the count grow unbounded; now only this set's removal
+        // decrements the count, and the interval tick below re-spawns.
+        private readonly HashSet<NpcController> m_alive = new HashSet<NpcController>();
 
         private void Start()
         {
-            SpawnInitial();
+            int burst = Mathf.Min(m_initialBurst, m_maxAlive);
+            for (int i = 0; i < burst; i++)
+                SpawnRandom();
+        }
+
+        private void Update()
+        {
+            m_intervalTimer += Time.deltaTime;
+            if (m_intervalTimer < m_spawnInterval)
+                return;
+            m_intervalTimer = 0f;
+            // One spawn at most per interval tick, never past the hard cap.
+            if (m_activeCount < m_maxAlive)
+                SpawnRandom();
         }
 
         /// <summary>
         /// Called by NpcController when it falls below the kill height.
-        /// Waits a random delay and then spawns a replacement.
+        /// Only the first notification per NPC counts; replacements come
+        /// from the interval tick in Update, not from a per-death coroutine.
         /// </summary>
         public void NotifyDespawn(NpcController npc)
         {
+            if (npc == null || !m_alive.Remove(npc))
+                return;
             m_activeCount = Mathf.Max(0, m_activeCount - 1);
-            float delay = Random.Range(m_respawnMinDelay, m_respawnMaxDelay);
-            StartCoroutine(SpawnAfterDelay(npc, delay));
-        }
-
-        private void SpawnInitial()
-        {
-            for (int i = 0; i < m_targetCount; i++)
-            {
-                SpawnRandom();
-            }
-        }
-
-        private IEnumerator SpawnAfterDelay(NpcController npc, float delay)
-        {
-            yield return new WaitForSeconds(delay);
-            SpawnRandom();
         }
 
         private void SpawnRandom()
         {
+            if (m_activeCount >= m_maxAlive)
+                return;
+
             var player = Object.FindAnyObjectByType<WhackySlappy.Player.FirstPersonController>();
             Vector3 spawnPos;
             int attempts = 0;
@@ -61,7 +83,8 @@ namespace WhackySlappy.NPC
                      Vector3.Distance(spawnPos, player.transform.position) < m_minSpawnDistance
                      && attempts < 20);
 
-            NpcController.Create(spawnPos, this);
+            NpcController npc = NpcController.Create(spawnPos, this);
+            m_alive.Add(npc);
             m_activeCount++;
         }
     }
