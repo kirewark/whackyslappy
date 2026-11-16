@@ -11,18 +11,21 @@ namespace WhackySlappy.Slap
     /// builder: no per-frame work.
     ///
     /// Convention (matches SlapHand's +Z-forward hand): fingers point along
-    /// local +Z (forward), the thumb sits on the local -X side (right hand:
-    /// SlapHand's Rz(-90) roll maps -X to +Y so the thumb is up), and the
-    /// palm's flat face normal points along local -Y (mapped to -X, screen
-    /// centre). Overall size is about 0.22 m wide (X) x 0.06 m thick (Y) x
-    /// 0.30 m long (Z); the palm's -Z end is the wrist, where the cuff sits.
+    /// local +Z (forward), the thumb sits on the local +X side angled 45 deg
+    /// outward and forward, and the palm's flat face normal points along
+    /// local -Y (SlapHand's Rz(-90) roll maps -Y to -X, facing the screen
+    /// centre; +X maps to -Y so the thumb hangs low). The wrist is at local
+    /// z = 0 (SlapHand pivots the model there) and the glove extends to
+    /// about z 0.20: palm 0.11 wide (X) x 0.035 thick (Y) x 0.10 long (Z),
+    /// thin fingers (0.022 dia) and a small flattened cuff at the -Z end, so
+    /// at SlapHand's uniform scale 3 the glove is about 0.6 m long.
     /// </summary>
     public static class HandModelBuilder
     {
         // Cartoon white-glove colours: glove white and a slightly grey
         // wrist cuff for the shared fallback materials.
         private static readonly Color s_gloveColor = new Color(0.97f, 0.97f, 0.97f);
-        private static readonly Color s_cuffColor = new Color(0.85f, 0.85f, 0.85f);
+        private static readonly Color s_cuffColor = new Color(0.9f, 0.9f, 0.9f);
 
         // One shared glove material, and one shared cuff material, created
         // lazily when Build is called without one.
@@ -50,21 +53,23 @@ namespace WhackySlappy.Slap
             var handMat = material != null ? material : GetSharedMaterial();
             var cuffMat = material != null ? material : GetSharedCuffMaterial();
 
-            // Palm: unit sphere scaled into a rounded slab, sitting toward the
-            // back so the fingers bring the total length to about 0.30 m.
+            // Palm: unit sphere scaled into a true-proportion glove slab,
+            // wrist at local z = 0 so the palm body spans z 0..0.10.
             MakePart("Palm", PrimitiveType.Sphere, root.transform,
-                new Vector3(0f, 0f, -0.06f), Quaternion.identity,
-                new Vector3(0.18f, 0.055f, 0.17f), handMat);
+                new Vector3(0f, 0f, 0.05f), Quaternion.identity,
+                new Vector3(0.11f, 0.035f, 0.1f), handMat);
 
-            // Four fat finger capsules fanned slightly in the X-Z plane.
-            // The capsule primitive is 2.0 tall along its local Y axis, so an
-            // Euler(90, fan, 0) rotation points it forward and Yaw fans it.
+            // Four slim finger capsules with visible gaps (0.022 diameter
+            // on 0.028 centres, leaving ~0.006 between fingers), fanned
+            // 2.5-8 deg outward in the X-Z plane. The capsule primitive is
+            // 2.0 tall along its local Y axis, so an Euler(90, fan, 0)
+            // rotation points it forward and the yaw fans it outward.
             var fingerNames = new[] { "Finger_Index", "Finger_Middle", "Finger_Ring", "Finger_Pinky" };
-            var fingerX = new[] { 0.055f, 0.018f, -0.018f, -0.065f };
-            var fingerLen = new[] { 0.115f, 0.135f, 0.110f, 0.085f }; // middle longest, pinky shortest
-            var fingerFanDeg = new[] { 6f, 0f, -5f, -11f };
-            const float FingerDiameter = 0.042f; // fat, cartoon proportions
-            const float FingerBaseZ = 0.02f;     // where the fingers meet the palm
+            var fingerX = new[] { 0.042f, 0.014f, -0.014f, -0.042f };
+            var fingerLen = new[] { 0.085f, 0.095f, 0.08f, 0.07f }; // middle longest, pinky shortest
+            var fingerFanDeg = new[] { 8f, 2.5f, -2.5f, -8f };
+            const float FingerDiameter = 0.022f; // slim, true glove proportions
+            const float FingerBaseZ = 0.09f;     // where the fingers meet the palm edge
 
             for (int fi = 0; fi < fingerNames.Length; fi++)
             {
@@ -78,27 +83,28 @@ namespace WhackySlappy.Slap
                     new Vector3(FingerDiameter, fingerLength, FingerDiameter), handMat);
             }
 
-            // Thumb: fat capsule angled about 40 degrees outward on -X
-            // (right-hand side of the model; SlapHand's Rz(-90) roll maps
-            // -X to +Y so the thumb points up with fingers forward).
-            var thumbRot = Quaternion.Euler(90f, -40f, 0f);
+            // Thumb: slim capsule on +X (SlapHand's Rz(-90) roll maps +X
+            // to camera -Y, so the thumb hangs low on the right-side hand),
+            // angled 45 deg outward and forward from the palm edge near the
+            // wrist, with its axis in the X-Z plane.
+            var thumbRot = Quaternion.Euler(90f, 45f, 0f);
             var thumbDir = thumbRot * Vector3.up;
-            var thumbBase = new Vector3(-0.062f, 0f, -0.02f);
-            const float ThumbLength = 0.085f;
-            const float ThumbDiameter = 0.050f;
+            var thumbBase = new Vector3(0.05f, 0f, 0.025f);
+            const float ThumbLength = 0.07f;
+            const float ThumbDiameter = 0.028f;
             MakePart("Thumb", PrimitiveType.Capsule, root.transform,
                 thumbBase + thumbDir * (ThumbLength * 0.5f), thumbRot,
                 new Vector3(ThumbDiameter, ThumbLength, ThumbDiameter), handMat);
 
-            // Cuff: short fat cylinder over the wrist end (palm's -Z end
-            // sits near z -0.145), slightly grey to read as the glove's
-            // opening. The capsule/cylinder primitive is 2.0 tall along
-            // local Y, so Euler(90,0,0) points its axis forward along Z;
-            // cross-section sizes are chosen for SlapHand's anisotropic
-            // pivot scale (x -> upright width, z -> screen thickness).
+            // Cuff: short flattened cylinder at the wrist (z -0.02..0.04,
+            // overlapping the palm's -Z end), 0.13 across X, flattened to
+            // 0.078 thick in Y (cylinder y-scale ~0.6 of 0.13) so it reads
+            // as a glove opening instead of a fat tube. The cylinder
+            // primitive is 2.0 tall along local Y, so Euler(90,0,0) points
+            // its axis forward along Z.
             MakePart("Cuff", PrimitiveType.Cylinder, root.transform,
-                new Vector3(0f, 0f, -0.13f), Quaternion.Euler(90f, 0f, 0f),
-                new Vector3(0.12f, 0.05f, 0.06f), cuffMat);
+                new Vector3(0f, 0f, 0.01f), Quaternion.Euler(90f, 0f, 0f),
+                new Vector3(0.13f, 0.06f, 0.078f), cuffMat);
 
             return root.transform;
         }
