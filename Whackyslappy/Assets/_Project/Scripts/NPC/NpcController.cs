@@ -1,4 +1,3 @@
-using System.Collections;
 using UnityEngine;
 using WhackySlappy.Core;
 using WhackySlappy.Slap;
@@ -88,6 +87,22 @@ namespace WhackySlappy.NPC
         private float m_hitCooldownTimer = 0f;
         private Vector3 m_wanderTarget = Vector3.zero;
 
+        // Cached player transform: found once, reused every physics tick
+        // instead of FindAnyObjectByType per tick. Unity's null check
+        // re-finds it if the player object is ever destroyed.
+        private static Transform s_playerTransform;
+
+        private static Transform GetCachedPlayerTransform()
+        {
+            if (s_playerTransform == null)
+            {
+                var cc = Object.FindAnyObjectByType<CharacterController>();
+                if (cc != null)
+                    s_playerTransform = cc.transform;
+            }
+            return s_playerTransform;
+        }
+
         // -------------------------------------------------------------------------
         // MonoBehaviour
         // -------------------------------------------------------------------------
@@ -100,7 +115,28 @@ namespace WhackySlappy.NPC
             m_rb.angularDamping = 0.5f;
             m_rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
             // Plan A1: lower center of mass so gravity doesn't tip the NPC.
-            m_rb.centerOfMass = new Vector3(0f, m_centerOfMassOffset, 0f);
+            ApplyLowCenterOfMass();
+        }
+
+        /// <summary>
+        /// Plan A1: place the rigidbody center of mass just above the feet,
+        /// measured relative to the capsule collider (not the root pivot),
+        /// so the NPC stays bottom-heavy like an inflatable punching clown.
+        /// </summary>
+        private void ApplyLowCenterOfMass()
+        {
+            float localY = m_centerOfMassOffset;
+            var capsule = GetComponentInChildren<CapsuleCollider>();
+            if (capsule != null)
+            {
+                // CapsuleCollider.height is unscaled; world half-height is
+                // height * Y scale / 2. For a 2 m tall primitive scaled 0.8
+                // this puts the COM at about -0.5 local Y.
+                float halfHeightWorld = capsule.height * capsule.transform.lossyScale.y * 0.5f;
+                float feetLocalY = capsule.transform.localPosition.y - halfHeightWorld;
+                localY = feetLocalY + m_centerOfMassOffset;
+            }
+            m_rb.centerOfMass = new Vector3(0f, localY, 0f);
         }
 
         private void Start()
@@ -177,14 +213,14 @@ namespace WhackySlappy.NPC
                 return; // no wander push while fallen
             }
 
-            // Find the player for distance check and direction.
-            var player = Object.FindAnyObjectByType<CharacterController>();
+            // Cached player transform for distance check and direction.
+            var player = GetCachedPlayerTransform();
 
             if (player != null)
             {
                 float dist = Vector3.Distance(
                     new Vector3(transform.position.x, 0, transform.position.z),
-                    new Vector3(player.transform.position.x, 0, player.transform.position.z));
+                    new Vector3(player.position.x, 0, player.position.z));
 
                 if (dist > m_wanderStopDistance)
                 {
@@ -251,24 +287,6 @@ namespace WhackySlappy.NPC
         // -------------------------------------------------------------------------
         // State transitions
         // -------------------------------------------------------------------------
-
-        /// <summary>
-        /// In Wander: if the NPC gets hit (detected by tumbling detection)
-        /// it transitions to Tumbling. The actual hit goes through OnSlapped,
-        /// but this acts as a safety net if the hit was missed by the slap system.
-        /// </summary>
-        private void CheckTransitionToTumbling()
-        {
-            // If speed spikes significantly, the NPC was likely hit by something.
-            // However, the primary path is via OnSlapped from the slap system.
-            // We'll just check for a high speed as a fallback.
-            if (m_rb.linearVelocity.magnitude > 4.0f)
-            {
-                m_state = State.Tumbling;
-                m_hitCooldownTimer = m_hitCooldown;
-                m_settleTimer = 0f;
-            }
-        }
 
         /// <summary>
         /// In Tumbling: if speed drops below settleSpeed and the NPC is on ground,
@@ -399,15 +417,16 @@ namespace WhackySlappy.NPC
             rb.angularDamping = 0.5f;
             rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
 
-            // Plan A4: snap feet to y=0 on spawn (match Start() position logic).
+            // Plan A4: snap feet to y=0 on spawn using the scaled collider
+            // half-height (capsule.bounds.extents.y), not unscaled height/2.
             var capsule = body.GetComponent<CapsuleCollider>();
-            go.transform.position = new Vector3(position.x, capsule.height / 2f, position.z);
+            go.transform.position = new Vector3(position.x, capsule.bounds.extents.y, position.z);
 
             var controller = go.AddComponent<NpcController>();
             controller.m_spawner = spawner;
 
             // Plan A1: set center of mass after controller is created.
-            controller.GetComponent<Rigidbody>().centerOfMass = new Vector3(0f, controller.m_centerOfMassOffset, 0f);
+            controller.ApplyLowCenterOfMass();
 
             return controller;
         }

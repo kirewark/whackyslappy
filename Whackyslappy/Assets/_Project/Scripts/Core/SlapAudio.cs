@@ -21,9 +21,14 @@ namespace WhackySlappy.Core
         [SerializeField] private float m_minPitch = 0.8f;
         [SerializeField] private float m_maxPitch = 1.4f;
 
+        // Static mirrors of the tuning fields: static Play cannot read
+        // instance fields directly. Awake copies them from the component.
+        private static float s_minPitch = 0.8f;
+        private static float s_maxPitch = 1.4f;
+        private static float s_decayTime = 0.06f;
+
         private static readonly List<AudioSource> s_sourcePool = new();
         private static AudioClip s_slapClip;
-        private static float s_decayTimeDefault = 0.06f;
 
         /// <summary>
         /// Play the procedural slap sound at the given world position
@@ -35,7 +40,7 @@ namespace WhackySlappy.Core
         {
             if (s_slapClip == null)
             {
-                EnsureClipCreated(s_decayTimeDefault);
+                EnsureClipCreated(s_decayTime);
             }
 
             if (s_slapClip == null) return;
@@ -43,9 +48,10 @@ namespace WhackySlappy.Core
             var source = GetPooledSource();
             if (source == null) return;
 
+            source.transform.position = position;
             source.clip = s_slapClip;
             source.volume = strength;
-            source.pitch = Random.Range(m_minPitch, m_maxPitch);
+            source.pitch = Random.Range(s_minPitch, s_maxPitch);
             source.spatialBlend = 1f;
             source.Play();
         }
@@ -68,13 +74,22 @@ namespace WhackySlappy.Core
 
         private void Awake()
         {
+            // Route serialized tuning through the static fields so Play
+            // (static) honours them, including m_decayTime for the clip.
+            s_minPitch = m_minPitch;
+            s_maxPitch = m_maxPitch;
+            s_decayTime = m_decayTime;
+            EnsureClipCreated(s_decayTime);
+
             if (s_sourcePool.Count == 0)
             {
                 for (int i = 0; i < 8; i++)
                 {
                     var go = new GameObject("SlapAudioSource");
                     go.hideFlags = HideFlags.HideAndDontSave;
-                    s_sourcePool.Add(go.AddComponent<AudioSource>());
+                    var src = go.AddComponent<AudioSource>();
+                    src.playOnAwake = false;
+                    s_sourcePool.Add(src);
                 }
             }
         }
@@ -83,7 +98,7 @@ namespace WhackySlappy.Core
         {
             if (s_slapClip != null) return;
 
-            int sampleRate = AudioSettings.sampleRate;
+            int sampleRate = AudioSettings.outputSampleRate;
             if (sampleRate <= 0) sampleRate = 44100;
 
             int lengthSamples = Mathf.CeilToInt(sampleRate * decayTime);

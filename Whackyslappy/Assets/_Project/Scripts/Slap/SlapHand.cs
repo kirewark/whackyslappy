@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Linq;
 using UnityEngine;
 using WhackySlappy.Core;
 
@@ -58,6 +57,11 @@ namespace WhackySlappy.Slap
         private Vector3 m_lastHitPoint;
         private Vector3 m_lastHitImpulse;
 
+        // Cached query buffers: avoid per-physics-tick allocations.
+        private readonly Dictionary<Collider, Vector3> m_hitPoints = new();
+        private readonly RaycastHit[] m_sphereCastBuffer = new RaycastHit[32];
+        private readonly Collider[] m_overlapBuffer = new Collider[32];
+
         private void Awake()
         {
             // Build visual: a Cube primitive child scaled to hand dimensions.
@@ -89,22 +93,30 @@ namespace WhackySlappy.Slap
             {
                 var direction = delta / dist;
 
-                // 1) SphereCastAll: use actual hit point if non-zero
-                var hitPoints = new Dictionary<Collider, Vector3>();
-                foreach (var h in Physics.SphereCastAll(m_prevWorldPos, m_sweepRadius, direction, dist, GameLayers.MaskNPC, QueryTriggerInteraction.Ignore))
+                // 1) SphereCast sweep: use actual hit point if non-zero
+                // (NonAlloc into cached buffers, reused dictionary).
+                m_hitPoints.Clear();
+                int castCount = Physics.SphereCastNonAlloc(
+                    m_prevWorldPos, m_sweepRadius, direction, m_sphereCastBuffer,
+                    dist, GameLayers.MaskNPC, QueryTriggerInteraction.Ignore);
+                for (int i = 0; i < castCount; i++)
                 {
-                    if (h.point.sqrMagnitude > 0.0001f)
-                        hitPoints[h.collider] = h.point;
+                    var h = m_sphereCastBuffer[i];
+                    if (h.collider != null && h.point.sqrMagnitude > 0.0001f)
+                        m_hitPoints[h.collider] = h.point;
                 }
 
                 // 2) OverlapSphere at current position for start-overlap
-                foreach (var col in Physics.OverlapSphere(cur, m_sweepRadius, GameLayers.MaskNPC))
+                int overlapCount = Physics.OverlapSphereNonAlloc(
+                    cur, m_sweepRadius, m_overlapBuffer, GameLayers.MaskNPC);
+                for (int i = 0; i < overlapCount; i++)
                 {
-                    if (!hitPoints.ContainsKey(col))
-                        hitPoints[col] = cur;
+                    var col = m_overlapBuffer[i];
+                    if (col != null && !m_hitPoints.ContainsKey(col))
+                        m_hitPoints[col] = cur;
                 }
 
-                foreach (var kvp in hitPoints)
+                foreach (var kvp in m_hitPoints)
                 {
                     var rb = kvp.Key.attachedRigidbody;
                     if (rb == null || !m_hitThisSwing.Add(rb))
@@ -112,6 +124,12 @@ namespace WhackySlappy.Slap
 
                     var handVelocity = delta / Time.fixedDeltaTime;
                     var magnitude = handVelocity.magnitude;
+
+                    // Strength (0..1) derived from raw impulse magnitude,
+                    // computed before it is used in the debug log below.
+                    float rawMagnitude = magnitude * m_forceMultiplier;
+                    float strength = Mathf.Clamp01((rawMagnitude - m_minImpulse) / (m_maxImpulse - m_minImpulse));
+
                     Vector3 impulse = Vector3.zero;
                     if (magnitude > 0.0001f)
                     {
@@ -133,16 +151,14 @@ namespace WhackySlappy.Slap
                     var slappable = kvp.Key.GetComponent<ISlappable>();
                     slappable?.OnSlapped(impulse, kvp.Value);
 
-                    // Strength (0..1) derived from raw impulse magnitude.
-                    var rawMagnitude = handVelocity.magnitude * m_forceMultiplier;
-                    float strength = Mathf.Clamp01((rawMagnitude - m_minImpulse) / (m_maxImpulse - m_minImpulse));
-
                     m_lastHitPoint = kvp.Value;
                     m_lastHitImpulse = impulse;
                     m_lastHitTime = Time.time;
 
                     // Feed impact strength into audio and visual feedback.
-                    SlapAudio.Play(kvp.Value, strength);
+                    // Audio strength is floored at 0.25 so the softest hits
+                    // are not silent; HitFeedback floors strength itself.
+                    SlapAudio.Play(kvp.Value, Mathf.Max(0.25f, strength));
                     HitFeedback.Trigger(strength);
                 }
             }

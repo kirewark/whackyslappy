@@ -34,6 +34,12 @@ namespace WhackySlappy.Player
         /// </summary>
         public Vector3 Velocity { get; private set; }
 
+        /// <summary>
+        /// Current clamped look pitch in degrees, before camera-kick offsets.
+        /// HitFeedback adds its kick on top of this in LateUpdate.
+        /// </summary>
+        public float Pitch => m_pitch;
+
         private void Awake()
         {
             m_controller = GetComponent<CharacterController>();
