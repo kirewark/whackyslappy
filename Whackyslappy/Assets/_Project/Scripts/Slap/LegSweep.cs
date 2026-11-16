@@ -145,6 +145,7 @@ namespace WhackySlappy.Slap
 
             m_flatForward = fwd;
             m_sweepStartTime = Time.time;
+            SlapAudio.Play(SlapAudio.SoundKind.Whoosh, transform.position, 0.8f);
             m_phase = SweepPhase.Active;
             m_hitThisSweep.Clear();
             if (m_legVisual != null)
@@ -189,6 +190,7 @@ namespace WhackySlappy.Slap
             m_lastSweepHitTime = Time.time;
 
             SlapAudio.Play(point, m_strength);
+            SlapAudio.Play(SlapAudio.SoundKind.Boing, point, m_strength);
             HitFeedback.Trigger(m_strength * 0.7f);
         }
 

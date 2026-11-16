@@ -350,7 +350,10 @@ namespace WhackySlappy.NPC
         void ISlappable.OnHit(in SlapHitInfo hit)
         {
             if (hit.Kind == SlapKind.Sweep)
+            {
                 OnSwept(in hit);
+                NpcVoice.Yelp(transform.position, hit.Strength);
+            }
             else
             {
                 // Slap path: the hand has already applied the (silliness-
@@ -360,7 +363,10 @@ namespace WhackySlappy.NPC
                 bool accepted = m_hitCooldownTimer <= 0f;
                 OnSlapped(hit.Impulse, hit.Point);
                 if (accepted)
+                {
                     ApplyLaunchReaction(hit.Impulse, hit.Strength);
+                    NpcVoice.Yelp(transform.position, hit.Strength);
+                }
             }
         }
 
