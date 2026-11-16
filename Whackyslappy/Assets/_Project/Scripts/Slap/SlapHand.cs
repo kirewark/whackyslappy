@@ -36,6 +36,22 @@ namespace WhackySlappy.Slap
         [SerializeField] private float m_minImpulse = 6f;
 
         // -------------------------------------------------------------------------
+        // Tuning: directional slap (Pass 2, Phase 2)
+        // -------------------------------------------------------------------------
+
+        /// <summary>Drag below this many accumulated mouse-delta pixels
+        /// counts as a plain click and does the default swing.</summary>
+        [SerializeField] private float m_minDragPixels = 25f;
+
+        /// <summary>Distance (m, camera space) the hand starts offset opposite
+        /// the drag direction before sweeping through the rest point.</summary>
+        [SerializeField] private float m_aimStartOffset = 0.5f;
+
+        /// <summary>Weight of the drag direction added to the impulse
+        /// direction of a directional swing.</summary>
+        [SerializeField] private float m_directionalBias = 0.8f;
+
+        // -------------------------------------------------------------------------
         // Debug: impulse vector (Plan B4)
         // -------------------------------------------------------------------------
 
@@ -56,6 +72,13 @@ namespace WhackySlappy.Slap
         private HashSet<Rigidbody> m_hitThisSwing;
         private Vector3 m_lastHitPoint;
         private Vector3 m_lastHitImpulse;
+
+        // Directional-slap state (reset when a swing starts).
+        private bool m_aiming;                      // LMB held, accumulating drag
+        private bool m_directional;                 // current swing is a directional one
+        private Vector3 m_aimStartLocal;            // wind-up target, camera-local
+        private Vector3 m_dirStrikeLocal;           // strike-end target, camera-local
+        private Vector2 m_dirAimNorm;               // normalized drag (x=right, y=up, camera space)
 
         // Cached query buffers: avoid per-physics-tick allocations.
         private readonly Dictionary<Collider, Vector3> m_hitPoints = new();
@@ -135,9 +158,18 @@ namespace WhackySlappy.Slap
                     {
                         // Plan B1: full impulse direction formula
                         Vector3 dir =
-                            (handVelocity.normalized
-                             + m_forwardBias * transform.forward
-                             + m_upBias * transform.up).normalized;
+                            handVelocity.normalized
+                            + m_forwardBias * transform.forward
+                            + m_upBias * transform.up;
+
+                        // Directional slap: the drag direction pushes the
+                        // target toward where the player dragged (right =
+                        // backhand, up = uppercut, down = smash).
+                        if (m_directional)
+                            dir += m_directionalBias *
+                                (transform.right * m_dirAimNorm.x + transform.up * m_dirAimNorm.y);
+
+                        dir = dir.normalized;
                         float impulseMag = Mathf.Clamp(magnitude * m_forceMultiplier, m_minImpulse, m_maxImpulse);
                         impulse = dir * impulseMag;
 
@@ -149,7 +181,11 @@ namespace WhackySlappy.Slap
 
                     rb.AddForceAtPosition(impulse, kvp.Value, ForceMode.Impulse);
                     var slappable = kvp.Key.GetComponent<ISlappable>();
-                    slappable?.OnSlapped(impulse, kvp.Value);
+                    if (slappable != null)
+                    {
+                        var hit = new SlapHitInfo(kvp.Value, impulse, SlapKind.Slap, strength);
+                        slappable.OnHit(in hit);
+                    }
 
                     m_lastHitPoint = kvp.Value;
                     m_lastHitImpulse = impulse;
@@ -175,11 +211,33 @@ namespace WhackySlappy.Slap
 
         private void Update()
         {
-            if (m_phase == SwingPhase.Idle && InputReader != null && InputReader.AttackPressedThisFrame &&
+            // Press starts an aim hold instead of an instant swing. Release
+            // decides: a tiny drag swings exactly like a plain click did
+            // before; a real drag swings along the drag direction.
+            if (m_phase == SwingPhase.Idle && InputReader != null &&
                 Time.time - m_swingStartTime >= m_cooldown)
             {
-                StartSwing();
-                return;
+                if (InputReader.SlapPressed && !m_aiming)
+                {
+                    m_aiming = true;
+                    InputReader.ResetAim();
+                    if (Player != null)
+                        Player.LookSuppressed = true;
+                }
+
+                if (m_aiming && InputReader.SlapReleased)
+                {
+                    m_aiming = false;
+                    if (Player != null)
+                        Player.LookSuppressed = false;
+
+                    Vector2 aim = InputReader.ConsumeAim();
+                    if (aim.magnitude < m_minDragPixels)
+                        StartSwing();
+                    else
+                        StartDirectionalSwing(aim);
+                    return;
+                }
             }
 
             if (m_phase != SwingPhase.Active)
@@ -187,20 +245,23 @@ namespace WhackySlappy.Slap
 
             float elapsed = Time.time - m_swingStartTime;
             float strikeEndZ = 0.5f + m_reach * 0.6f;
-            Vector3 strikeEndPos = new Vector3(-0.35f, -0.2f, strikeEndZ);
+            Vector3 windUpPos = m_directional ? m_aimStartLocal : m_windUpPosition;
+            Vector3 strikeEndPos = m_directional
+                ? m_dirStrikeLocal
+                : new Vector3(-0.35f, -0.2f, strikeEndZ);
             float t;
 
             if (elapsed < m_windUpDuration)
             {
-                // Wind-up phase: rest -> wind-up
+                // Wind-up phase: rest -> wind-up (or aim-start for a drag swing)
                 t = elapsed / m_windUpDuration;
-                transform.localPosition = Vector3.Lerp(m_restPosition, m_windUpPosition, t);
+                transform.localPosition = Vector3.Lerp(m_restPosition, windUpPos, t);
             }
             else if (elapsed < m_windUpDuration + m_strikeDuration)
             {
                 // Active phase: wind-up -> strike end
                 t = (elapsed - m_windUpDuration) / m_strikeDuration;
-                transform.localPosition = Vector3.Lerp(m_windUpPosition, strikeEndPos, t);
+                transform.localPosition = Vector3.Lerp(windUpPos, strikeEndPos, t);
             }
             else
             {
@@ -212,6 +273,7 @@ namespace WhackySlappy.Slap
                 if (elapsed >= m_windUpDuration + m_strikeDuration + m_recoverDuration)
                 {
                     m_phase = SwingPhase.Idle;
+                    m_directional = false;
                     m_hitThisSwing.Clear();
                 }
             }
@@ -222,7 +284,46 @@ namespace WhackySlappy.Slap
             m_swingStartTime = Time.time;
             m_prevWorldPos = transform.position;
             m_phase = SwingPhase.Active;
+            m_directional = false;
             m_hitThisSwing.Clear();
+        }
+
+        /// <summary>
+        /// Starts a swing along the drag direction: the wind-up pose sits
+        /// opposite the drag in the camera right/up plane, and the strike
+        /// sweeps through the rest point out along the drag direction.
+        /// </summary>
+        private void StartDirectionalSwing(Vector2 aim)
+        {
+            float angle = Mathf.Atan2(aim.y, aim.x);
+            float cos = Mathf.Cos(angle);
+            float sin = Mathf.Sin(angle);
+
+            // Path direction in the camera right/up plane (hand local x/y).
+            Vector3 pathDir = new Vector3(cos, sin, 0f);
+
+            m_aimStartLocal = m_restPosition - pathDir * m_aimStartOffset;
+
+            // Strike end: same plane reach as the default swing's forward
+            // extension, plus the same forward z so the arc stays in front.
+            float strikeEndZ = 0.5f + m_reach * 0.6f;
+            float planeRadius = m_reach * 0.6f;
+            m_dirStrikeLocal = new Vector3(
+                m_restPosition.x + pathDir.x * planeRadius,
+                m_restPosition.y + pathDir.y * planeRadius,
+                strikeEndZ);
+            m_dirAimNorm = aim / aim.magnitude;
+
+            StartSwing();
+            m_directional = true;
+        }
+
+        private void OnDisable()
+        {
+            // Never leave the camera stuck with look suppressed.
+            m_aiming = false;
+            if (Player != null)
+                Player.LookSuppressed = false;
         }
 
         private void OnDrawGizmos()

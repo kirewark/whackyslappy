@@ -40,6 +40,13 @@ namespace WhackySlappy.Player
         /// </summary>
         public float Pitch => m_pitch;
 
+        /// <summary>
+        /// When true, mouse look input is ignored (movement is unaffected).
+        /// The directional slap sets this while the left mouse button is held
+        /// so the drag feeds the aim vector instead of turning the camera.
+        /// </summary>
+        public bool LookSuppressed { get; set; }
+
         private void Awake()
         {
             m_controller = GetComponent<CharacterController>();
@@ -102,6 +109,11 @@ namespace WhackySlappy.Player
         private void HandleLook()
         {
             if (Cursor.lockState != CursorLockMode.Locked)
+                return;
+
+            // While a slap aim drag is in progress, the mouse delta belongs
+            // to the aim vector, not the camera. Skip applying look input.
+            if (LookSuppressed)
                 return;
 
             var look = m_inputReader.Look;
