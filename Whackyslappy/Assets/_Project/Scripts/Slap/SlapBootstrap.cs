@@ -1,10 +1,13 @@
 using UnityEngine;
+using WhackySlappy.Core;
 
 namespace WhackySlappy.Slap
 {
     /// <summary>
     /// Bootstrap: locates the FirstPersonController after scene load and
     /// wires up the SlapHand component to its camera pivot.
+    /// Also attaches a HitFeedback component to the camera pivot for
+    /// camera shake and hit-stop feedback.
     /// </summary>
     public static class SlapBootstrap
     {
@@ -22,6 +25,11 @@ namespace WhackySlappy.Slap
                 var fps = Object.FindAnyObjectByType<WhackySlappy.Player.FirstPersonController>();
                 if (fps != null && fps.CameraPivot != null)
                 {
+                    // HitFeedback lives on the camera pivot so its localEulerAngles
+                    // apply directly to pitch/roll without fighting the FPS look code.
+                    var hitFeedback = fps.CameraPivot.gameObject.AddComponent<HitFeedback>();
+                    hitFeedback.enabled = false; // start disabled; Trigger enables it
+
                     var hand = new GameObject("SlapHand");
                     hand.transform.SetParent(fps.CameraPivot, false);
                     var slapHand = hand.AddComponent<SlapHand>();
