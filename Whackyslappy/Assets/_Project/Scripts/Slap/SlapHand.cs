@@ -63,6 +63,26 @@ namespace WhackySlappy.Slap
         /// live aim preview and the rotation reset after a swing.</summary>
         [SerializeField] private float m_aimResponse = 14f;
 
+        /// <summary>Max yaw (deg, about camera up) the hand turns toward the
+        /// pulled side while aiming, at full aim strength.</summary>
+        [SerializeField] private float m_aimYawDeg = 35f;
+
+        /// <summary>Max pitch (deg, about camera right) the hand tilts while
+        /// aiming at full aim strength. Dragging up lifts the fingertips
+        /// up, dragging down tips them down (drag-up = up rule).</summary>
+        [SerializeField] private float m_aimPitchDeg = 30f;
+
+        /// <summary>Clamp (deg, both signs) for the mirror-symmetric aim
+        /// roll about camera forward. Replaces the old hard +-70.</summary>
+        [SerializeField] private float m_aimRollDeg = 55f;
+
+        /// <summary>Amplitude (deg) of the small wrist wobble added to the
+        /// aim roll while aiming, so the held hand feels alive.</summary>
+        [SerializeField] private float m_aimWobbleDeg = 1.2f;
+
+        /// <summary>Frequency (rad/s, unscaled time) of the wrist wobble.</summary>
+        [SerializeField] private float m_aimWobbleFreq = 18f;
+
         /// <summary>Euler angles (deg) applied to the hand model root so the
         /// Inspector can fix the model's facing if the rest pose looks wrong.
         /// Default (-8, 0, -90) holds the hand as an upright FINGERS-FORWARD
@@ -129,8 +149,11 @@ namespace WhackySlappy.Slap
         private Vector3 m_aimStartLocal;            // wind-up target, camera-local
         private Vector3 m_dirStrikeLocal;           // strike-end target, camera-local
         private Vector2 m_dirAimNorm;               // strike direction (x=right, y=up, camera space)
-        private float m_aimRollDeg;                 // hand roll held during a directional swing: top edge leans toward the pull
+        private float m_swingRollDeg;               // hand roll held during a directional swing: top edge leans toward the pull
         private Vector3 m_swingFromLocal;           // hand local pose captured when a swing starts
+        private Quaternion m_swingFromRot = Quaternion.identity;  // root rotation when a swing starts
+        private Quaternion m_aimPose = Quaternion.identity;       // yaw*pitch*roll aimed pose held through wind-up
+        private Quaternion m_followPose = Quaternion.identity;    // mirrored follow-through pose at strike end
 
         // Cached query buffers: avoid per-physics-tick allocations.
         private readonly Dictionary<Collider, Vector3> m_hitPoints = new();
@@ -366,14 +389,27 @@ namespace WhackySlappy.Slap
                             // +Y) along the pull in the camera right/up
                             // plane (drag-up = up convention). The
                             // DeltaAngle formula is mirror-symmetric
-                            // (roll(-x) = -roll(x)); the +-70 deg clamp
-                            // keeps both sides presenting the same amount
-                            // of palm/back to the target.
+                            // (roll(-x) = -roll(x)); the +-m_aimRollDeg
+                            // clamp keeps both sides presenting the same
+                            // amount of palm/back to the target. A small
+                            // wobble rides on top so the held hand feels
+                            // alive.
                             float rollDeg = Mathf.Clamp(
                                 Mathf.DeltaAngle(0f, 90f -
                                     Mathf.Atan2(aimVec.y, aimVec.x) * Mathf.Rad2Deg),
-                                -70f, 70f);
-                            rotTarget = Quaternion.AngleAxis(rollDeg, Vector3.forward);
+                                -m_aimRollDeg, m_aimRollDeg);
+                            rollDeg += Mathf.Sin(Time.unscaledTime * m_aimWobbleFreq)
+                                * m_aimWobbleDeg * k;
+                            // Yaw about camera up: the hand turns toward
+                            // the pulled side. Pitch about camera right:
+                            // -aim.y keeps the verified drag-up = up rule
+                            // (negative angle about +X lifts the
+                            // forward-facing fingertips up).
+                            float yawDeg = Mathf.Sign(aimVec.x) * m_aimYawDeg * k;
+                            float pitchDeg = -(aimVec.y / aimMag) * m_aimPitchDeg * k;
+                            rotTarget = Quaternion.AngleAxis(yawDeg, Vector3.up)
+                                * Quaternion.AngleAxis(pitchDeg, Vector3.right)
+                                * Quaternion.AngleAxis(rollDeg, Vector3.forward);
                         }
                     }
                     float blend = 1f - Mathf.Exp(-m_aimResponse * Time.unscaledDeltaTime);
@@ -425,16 +461,23 @@ namespace WhackySlappy.Slap
                 }
             }
 
-            // Hand roll: a directional swing holds the lean-toward-the-pull
-            // roll through the wind-up and strike, then eases back to
+            // Hand rotation: a directional swing blends from the rotation
+            // the aim preview left the hand in, through the aimed
+            // yaw/pitch/roll pose during wind-up, to the mirrored
+            // follow-through pose by the strike end, then eases back to
             // identity during recover. The default swing never touches
             // rotation.
             if (m_directional)
             {
-                if (elapsed < m_windUpDuration + m_strikeDuration)
+                if (elapsed < m_windUpDuration)
                 {
-                    transform.localRotation = Quaternion.AngleAxis(
-                        m_aimRollDeg, Vector3.forward);
+                    transform.localRotation = Quaternion.Slerp(
+                        m_swingFromRot, m_aimPose, t);
+                }
+                else if (elapsed < m_windUpDuration + m_strikeDuration)
+                {
+                    transform.localRotation = Quaternion.Slerp(
+                        m_aimPose, m_followPose, t);
                 }
                 else
                 {
@@ -450,6 +493,7 @@ namespace WhackySlappy.Slap
         {
             m_swingStartTime = Time.time;
             m_swingFromLocal = transform.localPosition;
+            m_swingFromRot = transform.localRotation;
             m_prevWorldPos = transform.position;
             m_phase = SwingPhase.Active;
             m_directional = false;
@@ -466,14 +510,31 @@ namespace WhackySlappy.Slap
         /// </summary>
         private void StartDirectionalSwing(Vector2 aim)
         {
+            float aimMag = aim.magnitude;
             float angle = Mathf.Atan2(aim.y, aim.x);
             float cos = Mathf.Cos(angle);
             float sin = Mathf.Sin(angle);
+            float aimK = Mathf.Min(1f, aimMag / 60f);
             // Same mirror-symmetric lean roll the preview showed, clamped
-            // to +-70 deg; the sign flips with the pull side, so the
+            // to +-m_aimRollDeg; the sign flips with the pull side, so the
             // backhand presents the back of the hand symmetrically.
-            m_aimRollDeg = Mathf.Clamp(
-                Mathf.DeltaAngle(0f, 90f - angle * Mathf.Rad2Deg), -70f, 70f);
+            m_swingRollDeg = Mathf.Clamp(
+                Mathf.DeltaAngle(0f, 90f - angle * Mathf.Rad2Deg),
+                -m_aimRollDeg, m_aimRollDeg);
+
+            // The same yaw/pitch tilt the live preview drove: yaw toward
+            // the pulled side about camera up, pitch about camera right
+            // with the drag-up = up rule (-sin lifts the fingertips up).
+            float swingYawDeg = Mathf.Sign(aim.x) * m_aimYawDeg * aimK;
+            float swingPitchDeg = -sin * m_aimPitchDeg * aimK;
+            m_aimPose = Quaternion.AngleAxis(swingYawDeg, Vector3.up)
+                * Quaternion.AngleAxis(swingPitchDeg, Vector3.right)
+                * Quaternion.AngleAxis(m_swingRollDeg, Vector3.forward);
+            // Follow-through: mirrored yaw/pitch at 60% magnitude, held
+            // roll unchanged, reached at the strike end.
+            m_followPose = Quaternion.AngleAxis(-swingYawDeg * 0.6f, Vector3.up)
+                * Quaternion.AngleAxis(-swingPitchDeg * 0.6f, Vector3.right)
+                * Quaternion.AngleAxis(m_swingRollDeg, Vector3.forward);
 
             // Pull direction in the camera right/up plane (hand local x/y);
             // drag-up = up convention (not flipped).
@@ -485,7 +546,6 @@ namespace WhackySlappy.Slap
                 // Old arc: wind up opposite the drag so the strike sweeps
                 // along the drag direction, from the same x-centring
                 // anchor the live preview used (mirror-symmetric about x=0).
-                float aimK = Mathf.Min(1f, aim.magnitude / 60f);
                 m_aimStartLocal =
                     new Vector3(Mathf.Lerp(m_restPosition.x, 0f, aimK),
                         m_restPosition.y, m_restPosition.z) -
