@@ -60,8 +60,8 @@ namespace WhackySlappy.Core
         {
             for (int i = 0; i < s_sourcePool.Count; i++)
             {
-                var src = s_sourcePool[i];
-                if (!src.isPlaying) return src;
+                var candidate = s_sourcePool[i];
+                if (!candidate.isPlaying) return candidate;
             }
 
             var go = new GameObject("SlapAudioSource");
