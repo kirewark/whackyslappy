@@ -13,11 +13,11 @@ namespace WhackySlappy.Slap
         [Header("Tuning")]
         [SerializeField] private bool m_debugLog = false;
         [SerializeField] private float m_cooldown = 0.4f;
-        [SerializeField] private float m_reach = 1.7f;
+        [SerializeField] private float m_reach = 1.95f;
         [SerializeField] private float m_windUpDuration = 0.08f;
         [SerializeField] private float m_strikeDuration = 0.12f;
         [SerializeField] private float m_recoverDuration = 0.20f;
-        [SerializeField] private float m_sweepRadius = 0.4f;
+        [SerializeField] private float m_sweepRadius = 0.45f;
         [SerializeField] private float m_forceMultiplier = 1.5f;
         [SerializeField] private float m_maxImpulse = 30f;
 
@@ -65,13 +65,19 @@ namespace WhackySlappy.Slap
 
         /// <summary>Euler angles (deg) applied to the hand model root so the
         /// Inspector can fix the model's facing if the rest pose looks wrong.
-        /// Default keeps fingers along local +Z (forward, away from camera).</summary>
-        [SerializeField] private Vector3 m_handModelEuler = Vector3.zero;
+        /// Default (-75, 0, -90) makes the resting hand VERTICAL: Unity
+        /// composes Euler as Rz applied first then Rx, so Rz(-90) maps the
+        /// palm normal (model -Y) to (sin a, -cos a, 0) = -X at a=-90, i.e.
+        /// facing the screen centre from the right side, then Rx(-75) pitches
+        /// fingers (model +Z) up to (0, ~0.97, ~0.26): up with ~15 deg lean
+        /// forward. The thumb (model +X) lands up-and-forward, like an
+        /// upright right hand.</summary>
+        [SerializeField] private Vector3 m_handModelEuler =
+            new Vector3(-75f, 0f, -90f);
 
-        /// <summary>Uniform local scale of the HandModelPivot. 4.0 fills the
-        /// lower-right of the view (playtest at 2.6: only the fingertips
-        /// peeked in at the very bottom edge).</summary>
-        [SerializeField] private float m_handModelScale = 4f;
+        /// <summary>Uniform local scale of the HandModelPivot. 6.0 is the
+        /// playtest request: about 50 % bigger than the previous 4.0.</summary>
+        [SerializeField] private float m_handModelScale = 6f;
 
         // -------------------------------------------------------------------------
         // Debug: impulse vector (Plan B4)
@@ -83,14 +89,18 @@ namespace WhackySlappy.Slap
         public WhackySlappy.Player.PlayerInputReader InputReader { get; set; }
         public WhackySlappy.Player.FirstPersonController Player { get; set; }
 
-        // Rest offset in camera space: raised to y -0.2 and pushed back to
-        // z 0.6 so the whole scale-4 hand sits fully in the lower-right view
-        // (playtest: only fingertips showed). |y|/z = 0.33 keeps it inside
-        // the ~60 deg vertical FOV; the model's ~0.30 m +Z length scaled to
-        // 1.2 m puts the fingertips at z ~1.2, still inside the frustum and
-        // clear of the near clip; x 0.30 keeps the crosshair uncovered.
-        private readonly Vector3 m_restPosition = new Vector3(0.3f, -0.2f, 0.6f);
-        private readonly Vector3 m_windUpPosition = new Vector3(0.55f, -0.2f, 0.35f);
+        // Rest offset in camera space for the 6x upright hand (fingertips
+        // reach ~0.9 m above and ~0.35 m in front of this anchor): anchor
+        // lowered to y -0.35 and pushed back to z 0.95 so every fingertip
+        // stays inside the ~60 deg vertical FOV frustum (tightest is the
+        // pinky tip, which leans ~0.2 m toward the camera) with a small
+        // margin, and clear of the near clip. The palm base still runs off
+        // the bottom screen edge: an upright hand rooted below the view is
+        // the standard first-person framing. x 0.30 keeps the crosshair
+        // uncovered. Wind-up sits 0.25 m behind rest and keeps the palm's
+        // ~0.23 m camera-side reach clear of the near clip at 6x scale.
+        private readonly Vector3 m_restPosition = new Vector3(0.3f, -0.35f, 0.95f);
+        private readonly Vector3 m_windUpPosition = new Vector3(0.55f, -0.35f, 0.7f);
 
         private enum SwingPhase { Idle, Active }
         private SwingPhase m_phase;
@@ -138,8 +148,9 @@ namespace WhackySlappy.Slap
             handModelPivot.transform.SetParent(handVisual.transform, false);
             handModelPivot.transform.localScale = Vector3.one * m_handModelScale;
             var handModel = HandModelBuilder.Build(handModelPivot.transform);
-            // Fingers along local +Z (forward, away from the camera) by
-            // default; tweak in the Inspector if the pose looks wrong.
+            // Default m_handModelEuler stands the hand upright: fingers up
+            // (leaned ~15 deg forward), palm facing the screen centre; tweak
+            // in the Inspector if the pose looks wrong.
             handModel.localEulerAngles = m_handModelEuler;
             foreach (var t in handModel.GetComponentsInChildren<Transform>(true))
                 t.gameObject.layer = GameLayers.PlayerHand;
@@ -350,11 +361,11 @@ namespace WhackySlappy.Slap
                 return;
 
             float elapsed = Time.time - m_swingStartTime;
-            float strikeEndZ = 0.65f + m_reach * 0.6f;
+            float strikeEndZ = 0.75f + m_reach * 0.6f;
             Vector3 windUpPos = m_directional ? m_aimStartLocal : m_windUpPosition;
             Vector3 strikeEndPos = m_directional
                 ? m_dirStrikeLocal
-                : new Vector3(-0.35f, -0.2f, strikeEndZ);
+                : new Vector3(-0.35f, m_restPosition.y, strikeEndZ);
             float t;
 
             if (elapsed < m_windUpDuration)
@@ -471,7 +482,7 @@ namespace WhackySlappy.Slap
             // backhand's weird angle) while its mirror crossed the centre.
             // Anchoring at x = 0 makes horizontal strikes exact mirror
             // images sweeping through the same screen-centre target zone.
-            float strikeEndZ = 0.65f + m_reach * 0.6f;
+            float strikeEndZ = 0.75f + m_reach * 0.6f;
             float planeRadius = m_reach * 0.6f;
             m_dirStrikeLocal = new Vector3(
                 strikeDir.x * planeRadius,
