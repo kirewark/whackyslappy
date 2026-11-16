@@ -65,19 +65,31 @@ namespace WhackySlappy.Slap
 
         /// <summary>Euler angles (deg) applied to the hand model root so the
         /// Inspector can fix the model's facing if the rest pose looks wrong.
-        /// Default (-75, 0, -90) makes the resting hand VERTICAL: Unity
-        /// composes Euler as Rz applied first then Rx, so Rz(-90) maps the
-        /// palm normal (model -Y) to (sin a, -cos a, 0) = -X at a=-90, i.e.
-        /// facing the screen centre from the right side, then Rx(-75) pitches
-        /// fingers (model +Z) up to (0, ~0.97, ~0.26): up with ~15 deg lean
-        /// forward. The thumb (model +X) lands up-and-forward, like an
-        /// upright right hand.</summary>
+        /// Default (-8, 0, -90) holds the hand as an upright FINGERS-FORWARD
+        /// blade: Unity composes Euler as Rz applied first then Rx. Rz(-90)
+        /// maps the palm normal (model -Y) to (sin a, -cos a, 0) = -X at
+        /// a=-90, i.e. facing the screen centre from the right side, while
+        /// the model fingers (+Z) stay along +Z (camera forward). Because
+        /// Rz(-90) maps model +X to -Y, the glove builder puts the thumb on
+        /// the model -X side so it maps to +Y: thumb up. Rx(-8) then tilts
+        /// the fingers ~8 deg upward: -8 about X sends +Z to
+        /// (0, +sin 8, +cos 8) = (0, ~0.14, ~0.99): forward with a slight
+        /// upward tilt, thumb lands at (0, ~0.99, ~-0.14).</summary>
         [SerializeField] private Vector3 m_handModelEuler =
-            new Vector3(-75f, 0f, -90f);
+            new Vector3(-8f, 0f, -90f);
 
-        /// <summary>Uniform local scale of the HandModelPivot. 6.0 is the
-        /// playtest request: about 50 % bigger than the previous 4.0.</summary>
-        [SerializeField] private float m_handModelScale = 6f;
+        /// <summary>Local scale (x, y, z in the anchor's camera-aligned
+        /// frame) of the HandModelPivot on a 1.0-uniform cube anchor. The
+        /// model is Rz(-90)-rotated under the pivot, so its width axis
+        /// lands on camera Y and its thickness on camera X: the ~0.22 x
+        /// 0.06 x 0.34 m model becomes ~0.55 m tall (Y width), ~0.25 m
+        /// thick (X) and ~0.48 m long (forward Z): a wide chunky cartoon
+        /// glove that stays readable seen nearly end-on, while the modest
+        /// anisotropy keeps finger/cuff cross-sections from ballooning.
+        /// Replaces the old uniform float 6.0, which the squashed
+        /// 0.12/0.04/0.18 cube anchor was shrinking to a pencil sliver.</summary>
+        [SerializeField] private Vector3 m_handModelScale =
+            new Vector3(4.5f, 2.5f, 1.4f);
 
         // -------------------------------------------------------------------------
         // Debug: impulse vector (Plan B4)
@@ -89,17 +101,20 @@ namespace WhackySlappy.Slap
         public WhackySlappy.Player.PlayerInputReader InputReader { get; set; }
         public WhackySlappy.Player.FirstPersonController Player { get; set; }
 
-        // Rest offset in camera space for the 6x upright hand (fingertips
-        // reach ~0.9 m above and ~0.35 m in front of this anchor): anchor
-        // lowered to y -0.35 and pushed back to z 0.95 so every fingertip
-        // stays inside the ~60 deg vertical FOV frustum (tightest is the
-        // pinky tip, which leans ~0.2 m toward the camera) with a small
-        // margin, and clear of the near clip. The palm base still runs off
-        // the bottom screen edge: an upright hand rooted below the view is
-        // the standard first-person framing. x 0.30 keeps the crosshair
-        // uncovered. Wind-up sits 0.25 m behind rest and keeps the palm's
-        // ~0.23 m camera-side reach clear of the near clip at 6x scale.
-        private readonly Vector3 m_restPosition = new Vector3(0.3f, -0.35f, 0.95f);
+        // Rest anchor (hand centre) in camera space for the fingers-forward
+        // blade: the glove box is x 0.25..0.52 (thickness ~0.27, cuff
+        // widest), y -0.57..-0.02 (thumb tip highest), z 0.84..1.32
+        // (cuff back to fingertips). At z 1.10 the ~60 deg vertical FOV
+        // gives half-height 1.10 * tan(30) = 0.635 and, at 16:9, half-
+        // width 1.13: all ranges sit fully inside the frustum; the wind-
+        // up at z 0.7 keeps the cuff back edge at ~0.45, clear of the 0.4
+        // near clip. x
+        // 0.38 keeps the right-side framing without covering the
+        // crosshair; y -0.30 holds the hand low like the playtest, and
+        // fingertips at z 1.32 stay near the strike depth. The cube
+        // anchor sits at local zero now, so this is the single rest
+        // offset the aim/swing code lerps the root to (no double offset).
+        private readonly Vector3 m_restPosition = new Vector3(0.38f, -0.30f, 1.10f);
         private readonly Vector3 m_windUpPosition = new Vector3(0.55f, -0.35f, 0.7f);
 
         private enum SwingPhase { Idle, Active }
@@ -127,30 +142,39 @@ namespace WhackySlappy.Slap
 
         private void Awake()
         {
-            // Build visual: a Cube child kept as the hand anchor (it sits at
-            // the rest offset), but its cube renderer is disabled; the
-            // procedural cartoon hand model is what the player sees now.
+            // Build visual: a Cube child kept as the hand anchor, but now
+            // at local zero — the SlapHand root itself carries the rest
+            // offset (set at the end of Awake), so aim/swing lerps never
+            // double-count it. Its cube renderer stays disabled and its
+            // collider destroyed; it only exists to carry the model pivot.
             var handVisual = GameObject.CreatePrimitive(PrimitiveType.Cube);
             handVisual.transform.SetParent(transform, false);
-            handVisual.transform.localPosition = m_restPosition;
+            handVisual.transform.localPosition = Vector3.zero;
             handVisual.layer = GameLayers.PlayerHand;
             var scale = handVisual.transform.localScale;
-            scale.Set(0.12f, 0.04f, 0.18f);
+            // Uniform 1.0 anchor: the old 0.12/0.04/0.18 factors
+            // multiplied into the model chain (times the old uniform 6)
+            // squashed its width to 0.05 m, a pencil-like sliver that
+            // looked tiny end-on. The anchor carries no renderer or
+            // collider, so it is purely the model chain's parent here.
+            scale.Set(1f, 1f, 1f);
             handVisual.transform.localScale = scale;
             Destroy(handVisual.GetComponent<Collider>());
             handVisual.GetComponent<MeshRenderer>().enabled = false;
 
-            // Pivot under the scaled cube so the model keeps the cube's pose;
-            // m_handModelScale enlarges it uniformly so the hand is clearly
-            // visible on screen. The sweep uses casts only, so no collider
-            // is needed on the model.
+            // Pivot under the uniform-scale anchor; m_handModelScale is a
+            // per-axis vector (thickness, upright width, forward length in
+            // camera-aligned axes) so the glove is wide and chunky, not a
+            // foreshortened sliver. The sweep uses casts only, so no
+            // collider is needed on the model.
             var handModelPivot = new GameObject("HandModelPivot");
             handModelPivot.transform.SetParent(handVisual.transform, false);
-            handModelPivot.transform.localScale = Vector3.one * m_handModelScale;
+            handModelPivot.transform.localScale = m_handModelScale;
             var handModel = HandModelBuilder.Build(handModelPivot.transform);
-            // Default m_handModelEuler stands the hand upright: fingers up
-            // (leaned ~15 deg forward), palm facing the screen centre; tweak
-            // in the Inspector if the pose looks wrong.
+            // Default m_handModelEuler holds the hand as an upright
+            // fingers-forward blade: fingers forward (+Z, tilted ~8 deg
+            // up), palm facing the screen centre, thumb up; tweak in the
+            // Inspector if the pose looks wrong.
             handModel.localEulerAngles = m_handModelEuler;
             foreach (var t in handModel.GetComponentsInChildren<Transform>(true))
                 t.gameObject.layer = GameLayers.PlayerHand;
@@ -159,6 +183,12 @@ namespace WhackySlappy.Slap
             var rb = gameObject.AddComponent<Rigidbody>();
             rb.isKinematic = true;
             rb.useGravity = false;
+
+            // The root carries the rest offset (the anchor child sits at
+            // local zero), matching what OnDisable and the swing-recover
+            // end already assume.
+            transform.localPosition = m_restPosition;
+            transform.localRotation = Quaternion.identity;
 
             m_prevWorldPos = transform.position;
             m_hitThisSwing = new HashSet<Rigidbody>();
