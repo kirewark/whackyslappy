@@ -148,9 +148,14 @@ namespace WhackySlappy.Slap
                     var handVelocity = delta / Time.fixedDeltaTime;
                     var magnitude = handVelocity.magnitude;
 
-                    // Strength (0..1) derived from raw impulse magnitude,
-                    // computed before it is used in the debug log below.
-                    float rawMagnitude = magnitude * m_forceMultiplier;
+                    // Silly physics (Pass 2, Phase 4): scale the computed
+                    // impulse by the silliness multiplier before both the
+                    // applied impulse and the strength normalisation below.
+                    // Strength stays clamped to 0..1 (it just saturates more
+                    // often when silly). ImpulseMultiplier is 1 at
+                    // Silliness = 0, keeping the old numbers exactly.
+                    float rawMagnitude =
+                        magnitude * m_forceMultiplier * SillyPhysics.ImpulseMultiplier;
                     float strength = Mathf.Clamp01((rawMagnitude - m_minImpulse) / (m_maxImpulse - m_minImpulse));
 
                     Vector3 impulse = Vector3.zero;
@@ -170,7 +175,8 @@ namespace WhackySlappy.Slap
                                 (transform.right * m_dirAimNorm.x + transform.up * m_dirAimNorm.y);
 
                         dir = dir.normalized;
-                        float impulseMag = Mathf.Clamp(magnitude * m_forceMultiplier, m_minImpulse, m_maxImpulse);
+                        float impulseMag = Mathf.Clamp(
+                            rawMagnitude, m_minImpulse, m_maxImpulse);
                         impulse = dir * impulseMag;
 
                         // Plan B3: log hand speed and impulse for tuning.

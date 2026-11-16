@@ -81,6 +81,19 @@ namespace WhackySlappy.NPC
         [SerializeField] private float m_maxSweepUpVelocity = 3f;
 
         // -------------------------------------------------------------------------
+        // Silly physics (Pass 2, Phase 4). All lerp endpoints for the feel
+        // multipliers live in SillyPhysics; these are NPC-local values.
+        // -------------------------------------------------------------------------
+
+        /// <summary>Extra angular-velocity headroom granted per unit of
+        /// SillyPhysics.SpinTorque, so wild launch spin is not capped away.</summary>
+        private const float kSpinAngularVelocityBonus = 2f;
+
+        /// <summary>Duration (s) of one squash-and-stretch pulse. Fixed feel
+        /// constant (not silliness-scaled), as specced.</summary>
+        private const float kSquashDuration = 0.25f;
+
+        // -------------------------------------------------------------------------
         // Internal state
         // -------------------------------------------------------------------------
 
@@ -102,6 +115,31 @@ namespace WhackySlappy.NPC
         // World half-height from the root pivot down to the feet, cached in
         // Start from the body capsule; sweep impulses push exactly there.
         private float m_feetHalfHeight = 0.8f;
+
+        // Silly physics: post-launch hang-time countdown in physics seconds;
+        // while > 0, part of this NPC's gravity is cancelled in FixedUpdate.
+        private float m_hangTimer = 0f;
+
+        // Silly physics: bounce material created once in Start; its
+        // bounciness tracks SillyPhysics.BounceFactor each physics tick.
+        private PhysicsMaterial m_bounceMaterial;
+
+        // Rigidbody angular-velocity cap captured at Awake; the spin boost is
+        // added on top of it every tick and vanishes with Silliness 0.
+        private float m_baseMaxAngularVelocity = 7f;
+
+        // Squash-and-stretch pulse. m_visualPivot is a renderer-only child
+        // transform (never the rigidbody root, never a transform that also
+        // carries a collider), so scaling it cannot affect physics. It stays
+        // null for the primitive-built NPCs, whose colliders sit on the same
+        // child GameObjects as their meshes: scaling those would scale the
+        // colliders, so squash is skipped for them (SetupSquashPivot).
+        private Transform m_visualPivot;
+        private Vector3 m_visualPivotBaseScale = Vector3.one;
+        private Vector3 m_squashDirLocal = Vector3.up;
+        private float m_squashAmount = 0f;
+        private float m_squashTime = 1f;
+        private bool m_squashActive = false;
 
         // Cached player transform: found once, reused every physics tick
         // instead of FindAnyObjectByType per tick. Unity's null check
@@ -130,6 +168,9 @@ namespace WhackySlappy.NPC
             m_rb.linearDamping = 0.1f;
             m_rb.angularDamping = 0.5f;
             m_rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+            // Silly physics: remember the spawn angular-velocity cap so the
+            // spin boost is relative to it (returns to it at Silliness 0).
+            m_baseMaxAngularVelocity = m_rb.maxAngularVelocity;
             // Plan A1: lower center of mass so gravity doesn't tip the NPC.
             ApplyLowCenterOfMass();
         }
@@ -168,6 +209,60 @@ namespace WhackySlappy.NPC
             var bodyCapsule = GetComponentInChildren<CapsuleCollider>();
             if (bodyCapsule != null)
                 m_feetHalfHeight = bodyCapsule.height * bodyCapsule.transform.lossyScale.y * 0.5f;
+
+            // Silly physics: one bouncy material on the body collider, plus a
+            // squash pivot that is safe to scale (null for primitive NPCs).
+            SetupBounceMaterial(bodyCapsule);
+            SetupSquashPivot();
+        }
+
+        /// <summary>
+        /// Attach a bouncy material to the body collider exactly once. Unity 6
+        /// uses PhysicsMaterial (NOT the legacy PhysicMaterial name). Bounce
+        /// combine is Maximum so the value wins against the platform's
+        /// low-bounce material; bounciness is kept in sync with Silliness in
+        /// FixedUpdate.
+        /// </summary>
+        private void SetupBounceMaterial(Collider bodyCollider)
+        {
+            if (bodyCollider == null)
+                return;
+            m_bounceMaterial = new PhysicsMaterial(name + "_SillyBounce");
+            m_bounceMaterial.bounciness = SillyPhysics.BounceFactor;
+            m_bounceMaterial.dynamicFriction = 0.6f;
+            m_bounceMaterial.staticFriction = 0.6f;
+            m_bounceMaterial.frictionCombine = PhysicsMaterialCombine.Average;
+            m_bounceMaterial.bounceCombine = PhysicsMaterialCombine.Maximum;
+            bodyCollider.material = m_bounceMaterial;
+        }
+
+        /// <summary>
+        /// Find a child transform that covers every renderer but no collider:
+        /// only such a subtree may be squash-scaled, because scaling the
+        /// rigidbody root or any collider-bearing transform changes physics.
+        /// The primitive test NPCs fail this check and keep squash disabled
+        /// until art splits meshes away from colliders.
+        /// </summary>
+        private void SetupSquashPivot()
+        {
+            Renderer[] renderers = GetComponentsInChildren<Renderer>();
+            if (renderers.Length == 0)
+                return;
+
+            Transform candidate = renderers[0].transform.parent;
+            if (candidate == null || candidate == transform)
+                return; // only the root visual exists: never scale the rb root
+
+            foreach (var r in renderers)
+                if (!r.transform.IsChildOf(candidate))
+                    return; // renderers scattered: no single visual subtree
+
+            foreach (var c in GetComponentsInChildren<Collider>())
+                if (c.transform.IsChildOf(candidate))
+                    return; // scaling would shrink/grow colliders: skip
+
+            m_visualPivot = candidate;
+            m_visualPivotBaseScale = candidate.localScale;
         }
 
         private void FixedUpdate()
@@ -175,6 +270,34 @@ namespace WhackySlappy.NPC
             // Hit cooldown countdown.
             if (m_hitCooldownTimer > 0f)
                 m_hitCooldownTimer -= Time.fixedDeltaTime;
+
+            // Silly physics: hard global speed cap so launches never become
+            // rockets (MaxSpeed 12-22 m/s; far above the wander cap, so
+            // wander behaviour is untouched).
+            float maxSpeed = SillyPhysics.MaxSpeed;
+            if (m_rb.linearVelocity.sqrMagnitude > maxSpeed * maxSpeed)
+                m_rb.linearVelocity = m_rb.linearVelocity.normalized * maxSpeed;
+
+            // Silly physics: allow wild launch spin; returns to the spawn cap
+            // exactly when Silliness is 0.
+            m_rb.maxAngularVelocity = m_baseMaxAngularVelocity
+                + SillyPhysics.SpinTorque * kSpinAngularVelocityBonus;
+
+            // Silly physics: hang time is applied as a counter-force instead
+            // of toggling useGravity, so contacts and sleeping stay intact.
+            // Cancels (1 - HangGravityScale) of gravity; plain arithmetic,
+            // GC-free. At Silliness 0 the cancel term is exactly 0.
+            if (m_hangTimer > 0f)
+            {
+                m_hangTimer -= Time.fixedDeltaTime;
+                float cancel = m_rb.mass * (1f - SillyPhysics.HangGravityScale);
+                m_rb.AddForce(-Physics.gravity * cancel, ForceMode.Force);
+            }
+
+            // Keep the one-shot bounce material in sync with the master
+            // slider (a float write per tick; never re-created).
+            if (m_bounceMaterial != null)
+                m_bounceMaterial.bounciness = SillyPhysics.BounceFactor;
 
             switch (m_state)
             {
@@ -229,7 +352,16 @@ namespace WhackySlappy.NPC
             if (hit.Kind == SlapKind.Sweep)
                 OnSwept(in hit);
             else
+            {
+                // Slap path: the hand has already applied the (silliness-
+                // scaled) impulse; run the existing state reaction, then add
+                // the silly launch layer only when the hit was actually
+                // accepted (OnSlapped ignores hits during cooldown).
+                bool accepted = m_hitCooldownTimer <= 0f;
                 OnSlapped(hit.Impulse, hit.Point);
+                if (accepted)
+                    ApplyLaunchReaction(hit.Impulse, hit.Strength);
+            }
         }
 
         /// <summary>
@@ -272,6 +404,103 @@ namespace WhackySlappy.NPC
             m_hitCooldownTimer = m_hitCooldown;
             m_state = State.Tumbling;
             m_settleTimer = 0f;
+
+            // Silly physics: a sweep gets the hang window and squash only.
+            // No random-axis spin here — the trip already got its topple
+            // torque, and a random spin would fight the fall.
+            m_hangTimer = SillyPhysics.HangTimeSeconds;
+            BeginSquash(hasTangent ? tangent : impulse, hit.Strength);
+        }
+
+        // -------------------------------------------------------------------------
+        // Silly physics launch reaction (Pass 2, Phase 4)
+        // -------------------------------------------------------------------------
+
+        /// <summary>
+        /// Extra reaction applied after a slap launch impulse is in the body:
+        /// random-axis spin torque scaled by SillyPhysics.SpinTorque and hit
+        /// strength, a hang-time window reducing this NPC's gravity, and a
+        /// squash-and-stretch pulse. Does nothing at Silliness 0.
+        /// </summary>
+        private void ApplyLaunchReaction(Vector3 impulse, float strength)
+        {
+            float spinTorque = SillyPhysics.SpinTorque;
+            float hang = SillyPhysics.HangTimeSeconds;
+            if (spinTorque <= 0f && hang <= 0f && SillyPhysics.SquashAmount <= 0f)
+                return;
+
+            strength = Mathf.Clamp01(strength);
+
+            // Random-axis spin, scaled by spin torque and hit strength.
+            if (spinTorque > 0f && strength > 0f)
+                m_rb.AddTorque(Random.onUnitSphere * (spinTorque * strength),
+                    ForceMode.Impulse);
+
+            // Hang-time window: gravity partially cancelled for
+            // HangTimeSeconds of physics ticks (countdown in FixedUpdate).
+            if (hang > 0f)
+                m_hangTimer = hang;
+
+            BeginSquash(impulse, strength);
+        }
+
+        /// <summary>
+        /// Begin a decaying squash-and-stretch pulse along the impulse
+        /// direction. No-op without a safe visual pivot (see SetupSquashPivot)
+        /// or at Silliness 0.
+        /// </summary>
+        private void BeginSquash(Vector3 impulse, float strength)
+        {
+            if (m_visualPivot == null)
+                return;
+
+            float amount = SillyPhysics.SquashAmount * Mathf.Clamp01(strength);
+            if (amount <= 0.001f)
+                return;
+
+            // Snap the impulse to the nearest local axis: a clean diagonal
+            // localScale pulse without building a rotation (GC-free).
+            Vector3 local = transform.InverseTransformDirection(impulse);
+            Vector3 abs = new Vector3(Mathf.Abs(local.x), Mathf.Abs(local.y), Mathf.Abs(local.z));
+            if (abs.x >= abs.y && abs.x >= abs.z)
+                m_squashDirLocal = new Vector3(Mathf.Sign(local.x), 0f, 0f);
+            else if (abs.y >= abs.z)
+                m_squashDirLocal = new Vector3(0f, Mathf.Sign(local.y), 0f);
+            else
+                m_squashDirLocal = new Vector3(0f, 0f, Mathf.Sign(local.z));
+
+            m_squashAmount = amount;
+            m_squashTime = 0f;
+            m_squashActive = true;
+        }
+
+        private void Update()
+        {
+            if (!m_squashActive)
+                return;
+
+            // Hit-stop scales Time.timeScale, so drive the pulse with
+            // unscaled delta time: it always restores in kSquashDuration
+            // real seconds even while the world is slowed.
+            m_squashTime += Time.unscaledDeltaTime;
+            float t = m_squashTime / kSquashDuration;
+
+            if (t >= 1f)
+            {
+                m_squashActive = false;
+                m_visualPivot.localScale = m_visualPivotBaseScale;
+                return;
+            }
+
+            // Quadratic decay pulse. m_squashDirLocal is an axis-aligned
+            // local-space unit vector, so the pulse is a pure diagonal
+            // localScale: stretch along the impulse direction, squash the
+            // two perpendicular axes by half the stretch (volume-preserving).
+            float decay = (1f - t) * (1f - t);
+            float a = m_squashAmount * decay;
+            Vector3 s = Vector3.one + m_squashDirLocal * a
+                - (Vector3.one - m_squashDirLocal) * (0.5f * a);
+            m_visualPivot.localScale = Vector3.Scale(m_visualPivotBaseScale, s);
         }
 
         // -------------------------------------------------------------------------
@@ -454,6 +683,13 @@ namespace WhackySlappy.NPC
             m_rb.linearVelocity = Vector3.zero;
             m_rb.angularVelocity = Vector3.zero;
             transform.rotation = Quaternion.identity;
+
+            // Silly physics: clear hang time and any live squash pulse so a
+            // recycled NPC spawns at rest and visually neutral.
+            m_hangTimer = 0f;
+            m_squashActive = false;
+            if (m_visualPivot != null)
+                m_visualPivot.localScale = m_visualPivotBaseScale;
         }
 
         // -------------------------------------------------------------------------
