@@ -48,6 +48,16 @@ namespace WhackySlappy.Core
         [SerializeField] private float m_whooshDuration = 0.3f;
         [SerializeField] private float m_sweepDuration = 0.35f;
 
+        [Header("Real Slap Clips (SoundBank)")]
+        // Optional Inspector overrides. When empty, Awake loads clips from
+        // Resources via SoundBank.Load().
+        [SerializeField] private AudioClip[] m_slapLightClips;
+        [SerializeField] private AudioClip[] m_slapHardClips;
+        [SerializeField] private bool m_sillyLayerWithRealClips = false;
+        [SerializeField] private float m_realClipMinPitch = 0.92f;
+        [SerializeField] private float m_realClipMaxPitch = 1.08f;
+        [SerializeField] private float m_realClipVolumeFloor = 0.35f;
+
         // Static mirrors of the tuning fields: static Play cannot read
         // instance fields directly. Awake copies them from the component.
         private static float s_minPitch = 0.8f;
@@ -62,6 +72,15 @@ namespace WhackySlappy.Core
         private static float s_slideWhistleDuration = 0.5f;
         private static float s_whooshDuration = 0.3f;
         private static float s_sweepDuration = 0.35f;
+
+        // Real slap clips from Inspector overrides or SoundBank.Load().
+        // Null/empty means fall back to the procedural Slap clip.
+        private static AudioClip[] s_slapLight;
+        private static AudioClip[] s_slapHard;
+        private static bool s_sillyLayerWithRealClips;
+        private static float s_realClipMinPitch = 0.92f;
+        private static float s_realClipMaxPitch = 1.08f;
+        private static float s_realClipVolumeFloor = 0.35f;
 
         private const float TwoPi = 2f * Mathf.PI;
 
@@ -87,6 +106,9 @@ namespace WhackySlappy.Core
         private static void ResetStaticState()
         {
             s_sourcePool.Clear();
+            s_slapLight = null;
+            s_slapHard = null;
+            s_sillyLayerWithRealClips = false;
             for (int i = 0; i < s_clips.Length; i++)
             {
                 s_clips[i] = null;
@@ -94,17 +116,24 @@ namespace WhackySlappy.Core
         }
 
         /// <summary>
-        /// Play the procedural slap sound at the given world position
-        /// with volume scaled by impact strength. With probability
-        /// SillyPhysics.Silliness * m_sillyLayerChance, one random silly
-        /// sound (Boing/Squeak/Honk/SlideWhistle) is layered on top at
-        /// half volume.
+        /// Play the slap sound at the given world position with volume
+        /// scaled by impact strength. Prefers real clips from the
+        /// SoundBank (hard set on strong hits, light set otherwise);
+        /// falls back to the procedural Slap clip when none exist.
+        /// With probability SillyPhysics.Silliness * m_sillyLayerChance,
+        /// one random silly sound (Boing/Squeak/Honk/SlideWhistle) is
+        /// layered on top at half volume - but only while the
+        /// procedural kit is in use, unless m_sillyLayerWithRealClips.
         /// </summary>
         /// <param name="position">World-space position for spatial audio.</param>
         /// <param name="strength">Impact strength; 1.0 = normal volume.</param>
         public static void Play(Vector3 position, float strength)
         {
-            Play(SoundKind.Slap, position, strength);
+            PlaySlapClipOrFallback(position, strength);
+
+            // The silly layer is off while real slap clips play, unless
+            // m_sillyLayerWithRealClips opts back in.
+            if (HasRealSlapClips() && !s_sillyLayerWithRealClips) return;
 
             // NpcVoice.Yelp stacks SlideWhistle on loud hits (strength
             // >= 0.7); skip our silly layer there so two silly sounds
@@ -116,6 +145,79 @@ namespace WhackySlappy.Core
                 {
                     SoundKind sillyKind = s_sillyKinds[Random.Range(0, s_sillyKinds.Length)];
                     Play(sillyKind, position, 0.5f * strength);
+                }
+            }
+        }
+
+        // Plays a real slap clip when one is available: strength >= 0.6
+        // picks from the hard set, else the light set; an empty set falls
+        // back to the other set, and only if both are empty do we use the
+        // procedural Slap clip. No per-hit allocation.
+        private static void PlaySlapClipOrFallback(Vector3 position, float strength)
+        {
+            AudioClip[] primary = strength >= 0.6f ? s_slapHard : s_slapLight;
+            AudioClip[] backup = strength >= 0.6f ? s_slapLight : s_slapHard;
+            AudioClip realClip = PickRealClip(primary);
+            if (realClip == null) realClip = PickRealClip(backup);
+            if (realClip == null)
+            {
+                Play(SoundKind.Slap, position, strength);
+                return;
+            }
+
+            AudioSource source = GetPooledSource();
+            if (source == null) return;
+
+            source.transform.position = position;
+            source.clip = realClip;
+            // Keep light hits audible via a volume floor.
+            source.volume = Mathf.Max(strength, s_realClipVolumeFloor);
+            source.pitch = Random.Range(s_realClipMinPitch, s_realClipMaxPitch);
+            source.spatialBlend = 1f;
+            source.Play();
+        }
+
+        // Random non-null entry from a clip array, scanned with a random
+        // start so a full pick costs no allocation and null holes are
+        // skipped without bias toward index 0.
+        private static AudioClip PickRealClip(AudioClip[] clips)
+        {
+            if (clips == null || clips.Length == 0) return null;
+            int start = Random.Range(0, clips.Length);
+            for (int i = 0; i < clips.Length; i++)
+            {
+                AudioClip candidate = clips[(start + i) % clips.Length];
+                if (candidate != null) return candidate;
+            }
+            return null;
+        }
+
+        private static bool HasRealSlapClips()
+        {
+            return PickRealClip(s_slapLight) != null || PickRealClip(s_slapHard) != null;
+        }
+
+        // Inspector overrides win when non-empty; otherwise fill from the
+        // SoundBank asset in Resources (null-safe if it was never built).
+        private void FillRealSlapClips()
+        {
+            if (m_slapLightClips != null && m_slapLightClips.Length > 0) s_slapLight = m_slapLightClips;
+            if (m_slapHardClips != null && m_slapHardClips.Length > 0) s_slapHard = m_slapHardClips;
+
+            if (s_slapLight == null || s_slapLight.Length == 0 ||
+                s_slapHard == null || s_slapHard.Length == 0)
+            {
+                SoundBank bank = SoundBank.Load();
+                if (bank == null) return;
+                if ((s_slapLight == null || s_slapLight.Length == 0) &&
+                    bank.SlapLight != null && bank.SlapLight.Length > 0)
+                {
+                    s_slapLight = bank.SlapLight;
+                }
+                if ((s_slapHard == null || s_slapHard.Length == 0) &&
+                    bank.SlapHard != null && bank.SlapHard.Length > 0)
+                {
+                    s_slapHard = bank.SlapHard;
                 }
             }
         }
@@ -145,6 +247,30 @@ namespace WhackySlappy.Core
             source.clip = clip;
             source.volume = strength;
             source.pitch = Random.Range(pitchMin, pitchMax);
+            source.spatialBlend = 1f;
+            source.Play();
+        }
+
+        /// <summary>
+        /// Plays an arbitrary clip through the pooled AudioSource path,
+        /// with the same position/spatial settings as the other Play
+        /// overloads. Null-safe and allocation-free.
+        /// </summary>
+        /// <param name="clip">Clip to play; null does nothing.</param>
+        /// <param name="position">World-space position for spatial audio.</param>
+        /// <param name="volume">Linear volume for this play.</param>
+        /// <param name="pitch">Playback pitch for this play.</param>
+        public static void PlayClip(AudioClip clip, Vector3 position, float volume, float pitch)
+        {
+            if (clip == null) return;
+
+            AudioSource source = GetPooledSource();
+            if (source == null) return;
+
+            source.transform.position = position;
+            source.clip = clip;
+            source.volume = volume;
+            source.pitch = pitch;
             source.spatialBlend = 1f;
             source.Play();
         }
@@ -182,6 +308,11 @@ namespace WhackySlappy.Core
             s_slideWhistleDuration = m_slideWhistleDuration;
             s_whooshDuration = m_whooshDuration;
             s_sweepDuration = m_sweepDuration;
+            s_realClipMinPitch = m_realClipMinPitch;
+            s_realClipMaxPitch = m_realClipMaxPitch;
+            s_realClipVolumeFloor = m_realClipVolumeFloor;
+            s_sillyLayerWithRealClips = m_sillyLayerWithRealClips;
+            FillRealSlapClips();
             EnsureAllClips();
 
             if (s_sourcePool.Count == 0)
