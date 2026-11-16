@@ -63,6 +63,11 @@ namespace WhackySlappy.Slap
         /// live aim preview and the rotation reset after a swing.</summary>
         [SerializeField] private float m_aimResponse = 14f;
 
+        /// <summary>Euler angles (deg) applied to the hand model root so the
+        /// Inspector can fix the model's facing if the rest pose looks wrong.
+        /// Default keeps fingers along local +Z (forward, away from camera).</summary>
+        [SerializeField] private Vector3 m_handModelEuler = Vector3.zero;
+
         // -------------------------------------------------------------------------
         // Debug: impulse vector (Plan B4)
         // -------------------------------------------------------------------------
@@ -101,7 +106,9 @@ namespace WhackySlappy.Slap
 
         private void Awake()
         {
-            // Build visual: a Cube primitive child scaled to hand dimensions.
+            // Build visual: a Cube child kept as the hand anchor (it sits at
+            // the rest offset), but its cube renderer is disabled; the
+            // procedural cartoon hand model is what the player sees now.
             var handVisual = GameObject.CreatePrimitive(PrimitiveType.Cube);
             handVisual.transform.SetParent(transform, false);
             handVisual.transform.localPosition = m_restPosition;
@@ -110,6 +117,20 @@ namespace WhackySlappy.Slap
             scale.Set(0.12f, 0.04f, 0.18f);
             handVisual.transform.localScale = scale;
             Destroy(handVisual.GetComponent<Collider>());
+            handVisual.GetComponent<MeshRenderer>().enabled = false;
+
+            // Unscaled pivot under the scaled cube so the model keeps the
+            // cube's pose without inheriting its non-uniform scale. The
+            // sweep uses casts only, so no collider is needed on the model.
+            var handModelPivot = new GameObject("HandModelPivot");
+            handModelPivot.transform.SetParent(handVisual.transform, false);
+            handModelPivot.transform.localScale = Vector3.one;
+            var handModel = HandModelBuilder.Build(handModelPivot.transform);
+            // Fingers along local +Z (forward, away from the camera) by
+            // default; tweak in the Inspector if the pose looks wrong.
+            handModel.localEulerAngles = m_handModelEuler;
+            foreach (var t in handModel.GetComponentsInChildren<Transform>(true))
+                t.gameObject.layer = GameLayers.PlayerHand;
 
             // Kinematic Rigidbody on the root.
             var rb = gameObject.AddComponent<Rigidbody>();
