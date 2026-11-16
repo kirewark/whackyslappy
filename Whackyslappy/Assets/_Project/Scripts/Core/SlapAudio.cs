@@ -79,6 +79,20 @@ namespace WhackySlappy.Core
 
         private static readonly List<AudioSource> s_sourcePool = new();
 
+        // Clears cached Unity objects on every domain reload: pool sources
+        // and baked clips are destroyed with the previous play session but
+        // the statics survive, leaving missing-reference entries (same
+        // discipline as SillyPhysics/NpcVoice).
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticState()
+        {
+            s_sourcePool.Clear();
+            for (int i = 0; i < s_clips.Length; i++)
+            {
+                s_clips[i] = null;
+            }
+        }
+
         /// <summary>
         /// Play the procedural slap sound at the given world position
         /// with volume scaled by impact strength. With probability
@@ -92,11 +106,17 @@ namespace WhackySlappy.Core
         {
             Play(SoundKind.Slap, position, strength);
 
-            float chance = SillyPhysics.Silliness * s_sillyLayerChance;
-            if (chance > 0f && Random.value < chance)
+            // NpcVoice.Yelp stacks SlideWhistle on loud hits (strength
+            // >= 0.7); skip our silly layer there so two silly sounds
+            // never pile up on the same impact.
+            if (strength < 0.7f)
             {
-                SoundKind sillyKind = s_sillyKinds[Random.Range(0, s_sillyKinds.Length)];
-                Play(sillyKind, position, 0.5f * strength);
+                float chance = Mathf.Clamp01(SillyPhysics.Silliness * s_sillyLayerChance);
+                if (chance > 0f && Random.value < chance)
+                {
+                    SoundKind sillyKind = s_sillyKinds[Random.Range(0, s_sillyKinds.Length)];
+                    Play(sillyKind, position, 0.5f * strength);
+                }
             }
         }
 
@@ -134,6 +154,7 @@ namespace WhackySlappy.Core
             for (int i = 0; i < s_sourcePool.Count; i++)
             {
                 var candidate = s_sourcePool[i];
+                if (candidate == null) continue; // destroyed with a previous session
                 if (!candidate.isPlaying) return candidate;
             }
 
@@ -161,7 +182,7 @@ namespace WhackySlappy.Core
             s_slideWhistleDuration = m_slideWhistleDuration;
             s_whooshDuration = m_whooshDuration;
             s_sweepDuration = m_sweepDuration;
-            EnsureClipForKind(SoundKind.Slap);
+            EnsureAllClips();
 
             if (s_sourcePool.Count == 0)
             {
@@ -173,6 +194,17 @@ namespace WhackySlappy.Core
                     src.playOnAwake = false;
                     s_sourcePool.Add(src);
                 }
+            }
+        }
+
+        // Bakes every kit clip once so the first slap does not hitch on
+        // clip generation. EnsureClipForKind stays as the lazy fallback
+        // for Play calls that run before any instance exists.
+        private static void EnsureAllClips()
+        {
+            for (int i = 0; i <= (int)SoundKind.Whoosh; i++)
+            {
+                EnsureClipForKind((SoundKind)i);
             }
         }
 

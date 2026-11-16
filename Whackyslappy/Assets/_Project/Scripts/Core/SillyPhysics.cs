@@ -35,7 +35,7 @@ namespace WhackySlappy.Core
         public const float MaxSpeedAt0 = 12.0f;
         public const float MaxSpeedAt1 = 22.0f;
 
-        public const float BounceFactorAt0 = 0.1f;
+        public const float BounceFactorAt0 = 0.0f;
         public const float BounceFactorAt1 = 0.7f;
 
         public const float SquashAmountAt0 = 0.0f;
@@ -63,7 +63,8 @@ namespace WhackySlappy.Core
         public static float MaxSpeed =>
             Mathf.Lerp(MaxSpeedAt0, MaxSpeedAt1, Mathf.Clamp01(Silliness));
 
-        /// <summary>Bounciness of the NPC body PhysicsMaterial (0.1 .. 0.7).</summary>
+        /// <summary>Bounciness of the NPC body PhysicsMaterial (0 .. 0.7);
+        /// 0 at Silliness 0 keeps the NPC at default (non-bouncy) physics.</summary>
         public static float BounceFactor =>
             Mathf.Lerp(BounceFactorAt0, BounceFactorAt1, Mathf.Clamp01(Silliness));
 

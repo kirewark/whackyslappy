@@ -39,6 +39,11 @@ namespace WhackySlappy.NPC
         /// <summary>Cooldown (s) after a hit during which the NPC ignores new hits.</summary>
         [SerializeField] private float m_hitCooldown = 0.1f;
 
+        /// <summary>Short cooldown (s) after a leg sweep, separate from the
+        /// slap hit-cooldown so one sweep does not re-trip every physics tick
+        /// while leaving the NPC still slap-able.</summary>
+        [SerializeField] private float m_sweepCooldown = 0.3f;
+
         /// <summary>Kill height (y) below which the NPC despawns.</summary>
         [SerializeField] private float m_killHeight = -10.0f;
 
@@ -106,10 +111,10 @@ namespace WhackySlappy.NPC
 
         private State m_state = State.Wander;
         private Rigidbody m_rb;
-        private Collider m_headCollider;
         private NpcSpawner m_spawner;
         private float m_settleTimer = 0f;
         private float m_hitCooldownTimer = 0f;
+        private float m_sweepCooldownTimer = 0f;
         private Vector3 m_wanderTarget = Vector3.zero;
 
         // World half-height from the root pivot down to the feet, cached in
@@ -201,9 +206,6 @@ namespace WhackySlappy.NPC
             // Grab the spawner reference (created once per scene by NpcBootstrap).
             m_spawner = Object.FindAnyObjectByType<NpcSpawner>();
 
-            // Assign head collider for hit-cooldown filtering.
-            m_headCollider = GetComponentInChildren<Collider>();
-
             // Cache the feet offset for sweep impulses: same world
             // half-height formula as ApplyLowCenterOfMass.
             var bodyCapsule = GetComponentInChildren<CapsuleCollider>();
@@ -219,20 +221,24 @@ namespace WhackySlappy.NPC
         /// <summary>
         /// Attach a bouncy material to the body collider exactly once. Unity 6
         /// uses PhysicsMaterial (NOT the legacy PhysicMaterial name). Bounce
-        /// combine is Maximum so the value wins against the platform's
-        /// low-bounce material; bounciness is kept in sync with Silliness in
-        /// FixedUpdate.
+        /// combine is Maximum only while BounceFactor > 0 so the value wins
+        /// against the platform's low-bounce material; at 0 it drops to
+        /// Average so Silliness 0 behaves like default physics. Bounciness
+        /// and combine are kept in sync with Silliness in FixedUpdate.
         /// </summary>
         private void SetupBounceMaterial(Collider bodyCollider)
         {
             if (bodyCollider == null)
                 return;
             m_bounceMaterial = new PhysicsMaterial(name + "_SillyBounce");
-            m_bounceMaterial.bounciness = SillyPhysics.BounceFactor;
+            float bounce = SillyPhysics.BounceFactor;
+            m_bounceMaterial.bounciness = bounce;
             m_bounceMaterial.dynamicFriction = 0.6f;
             m_bounceMaterial.staticFriction = 0.6f;
             m_bounceMaterial.frictionCombine = PhysicsMaterialCombine.Average;
-            m_bounceMaterial.bounceCombine = PhysicsMaterialCombine.Maximum;
+            m_bounceMaterial.bounceCombine = bounce > 0f
+                ? PhysicsMaterialCombine.Maximum
+                : PhysicsMaterialCombine.Average;
             bodyCollider.material = m_bounceMaterial;
         }
 
@@ -271,6 +277,15 @@ namespace WhackySlappy.NPC
             if (m_hitCooldownTimer > 0f)
                 m_hitCooldownTimer -= Time.fixedDeltaTime;
 
+            // Sweep cooldown countdown (separate timer, see m_sweepCooldown).
+            if (m_sweepCooldownTimer > 0f)
+                m_sweepCooldownTimer -= Time.fixedDeltaTime;
+
+            // Out-of-arena kill check runs every tick regardless of state, so
+            // an NPC sliding off the platform mid-Wander or mid-GettingUp
+            // still despawns (previously only checked in Tumbling).
+            CheckDespawn();
+
             // Silly physics: hard global speed cap so launches never become
             // rockets (MaxSpeed 12-22 m/s; far above the wander cap, so
             // wander behaviour is untouched).
@@ -295,9 +310,18 @@ namespace WhackySlappy.NPC
             }
 
             // Keep the one-shot bounce material in sync with the master
-            // slider (a float write per tick; never re-created).
+            // slider (float/enum writes per tick; never re-created). While
+            // BounceFactor is 0 (Silliness 0) the combine drops to Average so
+            // the material cannot out-bounce the platform: bounciness 0 with
+            // Average matches Unity's default physics.
             if (m_bounceMaterial != null)
-                m_bounceMaterial.bounciness = SillyPhysics.BounceFactor;
+            {
+                float bounce = SillyPhysics.BounceFactor;
+                m_bounceMaterial.bounciness = bounce;
+                m_bounceMaterial.bounceCombine = bounce > 0f
+                    ? PhysicsMaterialCombine.Maximum
+                    : PhysicsMaterialCombine.Average;
+            }
 
             switch (m_state)
             {
@@ -307,15 +331,40 @@ namespace WhackySlappy.NPC
                     break;
 
                 case State.Tumbling:
-                    // Pure physics — do nothing here.
+                    // Pure physics — do nothing here. (The kill-height check
+                    // runs unconditionally earlier in FixedUpdate.)
                     CheckTransitionToGettingUp();
-                    CheckDespawn();
                     break;
 
                 case State.GettingUp:
                     ApplySelfRighting(m_uprightStrength, m_uprightDampingGettingUp);
                     CheckTransitionToWander();
                     break;
+            }
+        }
+
+        /// <summary>
+        /// Landing clears the silly hang-time window: once the NPC actually
+        /// touches ground (a mostly-upward contact normal against anything
+        /// that is not another NPC), the low-gravity countdown stops so it
+        /// cannot hover on contact or get its gravity cancelled again while
+        /// sitting still.
+        /// </summary>
+        private void OnCollisionEnter(Collision collision)
+        {
+            if (m_hangTimer <= 0f)
+                return;
+            if (collision.gameObject.layer == GameLayers.NPC)
+                return;
+
+            var contacts = collision.contacts;
+            for (int i = 0; i < contacts.Length; i++)
+            {
+                if (contacts[i].normal.y > 0.5f)
+                {
+                    m_hangTimer = 0f;
+                    return;
+                }
             }
         }
 
@@ -351,6 +400,11 @@ namespace WhackySlappy.NPC
         {
             if (hit.Kind == SlapKind.Sweep)
             {
+                // Sweeps respect the slap hit-cooldown AND their own short
+                // sweep cooldown, so one continuous sweep leg cannot re-trip
+                // the NPC every physics tick.
+                if (m_hitCooldownTimer > 0f || m_sweepCooldownTimer > 0f)
+                    return;
                 OnSwept(in hit);
                 NpcVoice.Yelp(transform.position, hit.Strength);
             }
@@ -407,7 +461,9 @@ namespace WhackySlappy.NPC
                 m_rb.linearVelocity = v;
             }
 
-            m_hitCooldownTimer = m_hitCooldown;
+            // Sweep-specific cooldown, NOT the slap hit-cooldown: the NPC
+            // must stay slap-able right after a trip.
+            m_sweepCooldownTimer = m_sweepCooldown;
             m_state = State.Tumbling;
             m_settleTimer = 0f;
 
@@ -522,7 +578,6 @@ namespace WhackySlappy.NPC
             if (tiltAngle > m_tiltedThreshold)
             {
                 m_state = State.Tumbling;
-                m_hitCooldownTimer = m_hitCooldown;
                 m_settleTimer = 0f;
                 return; // no wander push while fallen
             }
@@ -686,6 +741,7 @@ namespace WhackySlappy.NPC
             m_state = State.Wander;
             m_settleTimer = 0f;
             m_hitCooldownTimer = 0f;
+            m_sweepCooldownTimer = 0f;
             m_rb.linearVelocity = Vector3.zero;
             m_rb.angularVelocity = Vector3.zero;
             transform.rotation = Quaternion.identity;
