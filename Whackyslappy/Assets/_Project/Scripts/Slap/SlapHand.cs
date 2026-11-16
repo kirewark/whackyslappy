@@ -13,11 +13,11 @@ namespace WhackySlappy.Slap
         [Header("Tuning")]
         [SerializeField] private bool m_debugLog = false;
         [SerializeField] private float m_cooldown = 0.4f;
-        [SerializeField] private float m_reach = 1.3f;
+        [SerializeField] private float m_reach = 1.7f;
         [SerializeField] private float m_windUpDuration = 0.08f;
         [SerializeField] private float m_strikeDuration = 0.12f;
         [SerializeField] private float m_recoverDuration = 0.20f;
-        [SerializeField] private float m_sweepRadius = 0.35f;
+        [SerializeField] private float m_sweepRadius = 0.4f;
         [SerializeField] private float m_forceMultiplier = 1.5f;
         [SerializeField] private float m_maxImpulse = 30f;
 
@@ -42,7 +42,7 @@ namespace WhackySlappy.Slap
 
         /// <summary>Drag below this many accumulated mouse-delta pixels
         /// counts as a plain click and does the default swing.</summary>
-        [SerializeField] private float m_minDragPixels = 12f;
+        [SerializeField] private float m_minDragPixels = 10f;
 
         /// <summary>Distance (m, camera space) the hand is offset toward the
         /// drag direction while aiming: the hand follows the mouse pull.</summary>
@@ -303,7 +303,7 @@ namespace WhackySlappy.Slap
                 return;
 
             float elapsed = Time.time - m_swingStartTime;
-            float strikeEndZ = 0.5f + m_reach * 0.6f;
+            float strikeEndZ = 0.65f + m_reach * 0.6f;
             Vector3 windUpPos = m_directional ? m_aimStartLocal : m_windUpPosition;
             Vector3 strikeEndPos = m_directional
                 ? m_dirStrikeLocal
@@ -412,7 +412,7 @@ namespace WhackySlappy.Slap
 
             // Strike end: same plane reach as the default swing's forward
             // extension, plus the same forward z so the arc stays in front.
-            float strikeEndZ = 0.5f + m_reach * 0.6f;
+            float strikeEndZ = 0.65f + m_reach * 0.6f;
             float planeRadius = m_reach * 0.6f;
             m_dirStrikeLocal = new Vector3(
                 m_restPosition.x + strikeDir.x * planeRadius,
