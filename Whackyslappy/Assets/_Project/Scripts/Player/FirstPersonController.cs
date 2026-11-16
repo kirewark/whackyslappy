@@ -116,6 +116,11 @@ namespace WhackySlappy.Player
             if (LookSuppressed)
                 return;
 
+            // On the frame the slap button is first pressed, the mouse delta
+            // of that frame must not turn the camera.
+            if (m_inputReader.SlapPressed)
+                return;
+
             var look = m_inputReader.Look;
             if (look == Vector2.zero)
                 return;

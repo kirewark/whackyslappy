@@ -20,6 +20,10 @@ namespace WhackySlappy.Slap
 
         private class Runner : MonoBehaviour
         {
+            // Give up after ~10 s of frames if no player shows up.
+            private const int MaxWaitFrames = 600;
+            private int m_framesWaited;
+
             private void Update()
             {
                 var fps = Object.FindAnyObjectByType<WhackySlappy.Player.FirstPersonController>();
@@ -27,8 +31,11 @@ namespace WhackySlappy.Slap
                 {
                     // HitFeedback lives on the camera pivot so its localEulerAngles
                     // apply directly to pitch/roll without fighting the FPS look code.
+                    // It stays enabled from the start so its Update can poll F1 for
+                    // the hit-stop toggle before the first hit; it only writes the
+                    // pivot while m_kickActive is set by a hit, so an idle
+                    // HitFeedback never touches the camera.
                     var hitFeedback = fps.CameraPivot.gameObject.AddComponent<HitFeedback>();
-                    hitFeedback.enabled = false; // start disabled; Trigger enables it
 
                     var hand = new GameObject("SlapHand");
                     hand.transform.SetParent(fps.CameraPivot, false);
@@ -47,6 +54,14 @@ namespace WhackySlappy.Slap
                         var sweep = hand.AddComponent<LegSweep>();
                         sweep.InputReader = input;
                     }
+                    Destroy(gameObject);
+                    return;
+                }
+
+                m_framesWaited++;
+                if (m_framesWaited >= MaxWaitFrames)
+                {
+                    Debug.LogWarning("SlapBootstrap: no FirstPersonController with a camera pivot after " + MaxWaitFrames + " frames; the runner gives up.");
                     Destroy(gameObject);
                 }
             }

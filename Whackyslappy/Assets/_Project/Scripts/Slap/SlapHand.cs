@@ -11,6 +11,7 @@ namespace WhackySlappy.Slap
     public class SlapHand : MonoBehaviour
     {
         [Header("Tuning")]
+        [SerializeField] private bool m_debugLog = false;
         [SerializeField] private float m_cooldown = 0.4f;
         [SerializeField] private float m_reach = 1.3f;
         [SerializeField] private float m_windUpDuration = 0.08f;
@@ -180,13 +181,17 @@ namespace WhackySlappy.Slap
                         impulse = dir * impulseMag;
 
                         // Plan B3: log hand speed and impulse for tuning.
-                        Debug.Log(
+                        if (m_debugLog)
+                            Debug.Log(
                             $"Slap: handSpeed={magnitude:F1} m/s, impulseMag={impulseMag:F1}, "
                             + $"strength={strength:F2}");
                     }
 
                     rb.AddForceAtPosition(impulse, kvp.Value, ForceMode.Impulse);
-                    var slappable = kvp.Key.GetComponent<ISlappable>();
+                    // NPC colliders are child GameObjects; the ISlappable
+                    // sits on the Rigidbody's root GO (same lookup as
+                    // LegSweep).
+                    var slappable = rb.GetComponent<ISlappable>();
                     if (slappable != null)
                     {
                         var hit = new SlapHitInfo(kvp.Value, impulse, SlapKind.Slap, strength);
@@ -206,7 +211,8 @@ namespace WhackySlappy.Slap
             }
 
             // Plan B4: draw impulse vector for one second after each hit.
-            if (m_lastHitImpulse.sqrMagnitude > 0.0001f
+            if (m_debugLog
+                && m_lastHitImpulse.sqrMagnitude > 0.0001f
                 && Time.time - m_lastHitTime < 1f)
             {
                 Debug.DrawRay(m_lastHitPoint, m_lastHitImpulse, Color.red, 1f);
@@ -309,6 +315,8 @@ namespace WhackySlappy.Slap
             Vector3 pathDir = new Vector3(cos, sin, 0f);
 
             m_aimStartLocal = m_restPosition - pathDir * m_aimStartOffset;
+            // Never let a downward drag's wind-up pose sink through the floor.
+            m_aimStartLocal.y = Mathf.Max(m_aimStartLocal.y, -0.5f);
 
             // Strike end: same plane reach as the default swing's forward
             // extension, plus the same forward z so the arc stays in front.

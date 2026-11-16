@@ -26,6 +26,10 @@ namespace WhackySlappy.Core
         [SerializeField] private float m_kickRoll = 0.5f;
         [SerializeField] private float m_kickDuration = 0.1f;
 
+        /// <summary>Cap per accumulated kick offset, in degrees, so
+        /// overlapping hits cannot spin the view.</summary>
+        [SerializeField] private float m_maxKick = 4f;
+
         [Header("Hit-Stop")]
         [SerializeField] private bool m_hitStopEnabled = true;
         [SerializeField] private float m_hitStopTimeScale = 0.05f;
@@ -62,14 +66,16 @@ namespace WhackySlappy.Core
 
         private void TriggerLocally(float strength)
         {
-            // The bootstrap starts us disabled; the first hit turns us on.
+            // Re-enable in case anything disabled us mid-life; the bootstrap
+            // now keeps us enabled from the start so F1 polling runs in Update.
             enabled = true;
 
             strength = Mathf.Max(strength, MinStrength);
 
-            // Camera kick: accumulate into current offset (each hit adds more shake).
-            m_currentKickPitch += m_kickPitch * strength;
-            m_currentKickRoll += m_kickRoll * strength;
+            // Camera kick: accumulate into current offset (each hit adds more
+            // shake), capped in magnitude by m_maxKick.
+            m_currentKickPitch = Mathf.Clamp(m_currentKickPitch + m_kickPitch * strength, -m_maxKick, m_maxKick);
+            m_currentKickRoll = Mathf.Clamp(m_currentKickRoll + m_kickRoll * strength, -m_maxKick, m_maxKick);
             m_kickElapsed = 0f;
             m_kickActive = true;
 

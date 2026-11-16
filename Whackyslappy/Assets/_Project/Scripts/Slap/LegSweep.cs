@@ -57,6 +57,17 @@ namespace WhackySlappy.Slap
                 m_legVisual.SetActive(false);
         }
 
+        /// <summary>Resets the sweep so a re-enable starts clean, and
+        /// hides the leg visual.</summary>
+        private void OnDisable()
+        {
+            m_phase = SweepPhase.Idle;
+            m_sweepStartTime = -1000f;
+            m_hitThisSweep.Clear();
+            if (m_legVisual != null)
+                m_legVisual.SetActive(false);
+        }
+
         private void Update()
         {
             DrawLastHit();
