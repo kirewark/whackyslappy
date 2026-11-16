@@ -68,10 +68,10 @@ namespace WhackySlappy.Slap
         /// Default keeps fingers along local +Z (forward, away from camera).</summary>
         [SerializeField] private Vector3 m_handModelEuler = Vector3.zero;
 
-        /// <summary>Uniform local scale of the HandModelPivot. 2.6 keeps the
-        /// hand clearly visible in the lower-right of the view (playtest:
-        /// the unscaled model read as a tiny hand at the far-right edge).</summary>
-        [SerializeField] private float m_handModelScale = 2.6f;
+        /// <summary>Uniform local scale of the HandModelPivot. 4.0 fills the
+        /// lower-right of the view (playtest at 2.6: only the fingertips
+        /// peeked in at the very bottom edge).</summary>
+        [SerializeField] private float m_handModelScale = 4f;
 
         // -------------------------------------------------------------------------
         // Debug: impulse vector (Plan B4)
@@ -83,10 +83,13 @@ namespace WhackySlappy.Slap
         public WhackySlappy.Player.PlayerInputReader InputReader { get; set; }
         public WhackySlappy.Player.FirstPersonController Player { get; set; }
 
-        // Rest offset in camera space: pulled ~25% toward screen centre in x
-        // (0.35 -> 0.26) so the enlarged hand sits lower-right without
-        // covering the crosshair. z stays 0.5 (> near clip margin of 0.35).
-        private readonly Vector3 m_restPosition = new Vector3(0.26f, -0.3f, 0.5f);
+        // Rest offset in camera space: raised to y -0.2 and pushed back to
+        // z 0.6 so the whole scale-4 hand sits fully in the lower-right view
+        // (playtest: only fingertips showed). |y|/z = 0.33 keeps it inside
+        // the ~60 deg vertical FOV; the model's ~0.30 m +Z length scaled to
+        // 1.2 m puts the fingertips at z ~1.2, still inside the frustum and
+        // clear of the near clip; x 0.30 keeps the crosshair uncovered.
+        private readonly Vector3 m_restPosition = new Vector3(0.3f, -0.2f, 0.6f);
         private readonly Vector3 m_windUpPosition = new Vector3(0.55f, -0.2f, 0.35f);
 
         private enum SwingPhase { Idle, Active }
@@ -308,16 +311,30 @@ namespace WhackySlappy.Slap
                     Quaternion rotTarget = Quaternion.identity;
                     if (aimMag > 0.0001f)
                     {
+                        float k = Mathf.Min(1f, aimMag / 60f);
                         Vector3 dirLocal = new Vector3(aimVec.x / aimMag, aimVec.y / aimMag, 0f);
-                        followTarget = m_restPosition +
-                            dirLocal * (m_aimStartOffset * Mathf.Min(1f, aimMag / 60f));
+                        // As the drag grows, the aim anchor eases from the
+                        // off-centre rest x to the camera forward axis
+                        // (x = 0), so a left pull and its mirrored right
+                        // pull reach mirror-image poses instead of one
+                        // wide path and one cramped path.
+                        Vector3 aimAnchor = new Vector3(
+                            Mathf.Lerp(m_restPosition.x, 0f, k),
+                            m_restPosition.y, m_restPosition.z);
+                        followTarget = aimAnchor + dirLocal * (m_aimStartOffset * k);
                         if (aimMag >= m_minDragPixels)
                         {
                             // Roll that points the hand's top edge (local
                             // +Y) along the pull in the camera right/up
-                            // plane (drag-up = up convention).
-                            float rollDeg = Mathf.DeltaAngle(0f, 90f -
-                                Mathf.Atan2(aimVec.y, aimVec.x) * Mathf.Rad2Deg);
+                            // plane (drag-up = up convention). The
+                            // DeltaAngle formula is mirror-symmetric
+                            // (roll(-x) = -roll(x)); the +-70 deg clamp
+                            // keeps both sides presenting the same amount
+                            // of palm/back to the target.
+                            float rollDeg = Mathf.Clamp(
+                                Mathf.DeltaAngle(0f, 90f -
+                                    Mathf.Atan2(aimVec.y, aimVec.x) * Mathf.Rad2Deg),
+                                -70f, 70f);
                             rotTarget = Quaternion.AngleAxis(rollDeg, Vector3.forward);
                         }
                     }
@@ -414,8 +431,11 @@ namespace WhackySlappy.Slap
             float angle = Mathf.Atan2(aim.y, aim.x);
             float cos = Mathf.Cos(angle);
             float sin = Mathf.Sin(angle);
-            // Same lean-toward-the-pull roll the preview showed.
-            m_aimRollDeg = Mathf.DeltaAngle(0f, 90f - angle * Mathf.Rad2Deg);
+            // Same mirror-symmetric lean roll the preview showed, clamped
+            // to +-70 deg; the sign flips with the pull side, so the
+            // backhand presents the back of the hand symmetrically.
+            m_aimRollDeg = Mathf.Clamp(
+                Mathf.DeltaAngle(0f, 90f - angle * Mathf.Rad2Deg), -70f, 70f);
 
             // Pull direction in the camera right/up plane (hand local x/y);
             // drag-up = up convention (not flipped).
@@ -425,9 +445,13 @@ namespace WhackySlappy.Slap
             if (m_strikeAlongDrag)
             {
                 // Old arc: wind up opposite the drag so the strike sweeps
-                // through the rest point along the drag direction.
-                m_aimStartLocal = m_restPosition -
-                    pullDir * (m_aimStartOffset * Mathf.Min(1f, aim.magnitude / 60f));
+                // along the drag direction, from the same x-centring
+                // anchor the live preview used (mirror-symmetric about x=0).
+                float aimK = Mathf.Min(1f, aim.magnitude / 60f);
+                m_aimStartLocal =
+                    new Vector3(Mathf.Lerp(m_restPosition.x, 0f, aimK),
+                        m_restPosition.y, m_restPosition.z) -
+                    pullDir * (m_aimStartOffset * aimK);
             }
             else
             {
@@ -440,12 +464,17 @@ namespace WhackySlappy.Slap
             // Never let a downward drag's wind-up pose sink through the floor.
             m_aimStartLocal.y = Mathf.Max(m_aimStartLocal.y, -0.5f);
 
-            // Strike end: same plane reach as the default swing's forward
-            // extension, plus the same forward z so the arc stays in front.
+            // Strike end: same plane reach and forward z as the default
+            // swing, but anchored on the camera forward axis (x = 0)
+            // instead of the off-centre rest x. Measured from rest x=+0.3,
+            // a left-to-right strike ended far right of screen (the
+            // backhand's weird angle) while its mirror crossed the centre.
+            // Anchoring at x = 0 makes horizontal strikes exact mirror
+            // images sweeping through the same screen-centre target zone.
             float strikeEndZ = 0.65f + m_reach * 0.6f;
             float planeRadius = m_reach * 0.6f;
             m_dirStrikeLocal = new Vector3(
-                m_restPosition.x + strikeDir.x * planeRadius,
+                strikeDir.x * planeRadius,
                 m_restPosition.y + strikeDir.y * planeRadius,
                 strikeEndZ);
             m_dirAimNorm = strikeDir; // already unit length
