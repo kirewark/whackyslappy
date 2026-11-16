@@ -32,9 +32,21 @@ namespace WhackySlappy.Slap
 
                     var hand = new GameObject("SlapHand");
                     hand.transform.SetParent(fps.CameraPivot, false);
+                    var input = fps.GetComponent<WhackySlappy.Player.PlayerInputReader>();
                     var slapHand = hand.AddComponent<SlapHand>();
-                    slapHand.InputReader = fps.GetComponent<WhackySlappy.Player.PlayerInputReader>();
+                    slapHand.InputReader = input;
                     slapHand.Player = fps;
+
+                    // LegSweep rides the same pivot child as SlapHand. The
+                    // pivot guard covers a second wiring pass (e.g. player
+                    // surviving a scene reload). InputReader is assigned
+                    // after AddComponent, so LegSweep must read it in
+                    // Update, not Awake — which it does.
+                    if (fps.CameraPivot.GetComponentInChildren<LegSweep>() == null)
+                    {
+                        var sweep = hand.AddComponent<LegSweep>();
+                        sweep.InputReader = input;
+                    }
                     Destroy(gameObject);
                 }
             }

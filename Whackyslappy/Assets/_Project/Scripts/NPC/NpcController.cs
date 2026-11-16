@@ -69,6 +69,18 @@ namespace WhackySlappy.NPC
         [SerializeField] private float m_uprightStrength = 30f;
 
         // -------------------------------------------------------------------------
+        // Sweep reaction tuning
+        // -------------------------------------------------------------------------
+
+        /// <summary>Topple torque added about the axis perpendicular to the
+        /// sweep tangent when this NPC is tripped by a leg sweep.</summary>
+        [SerializeField] private float m_sweepTorque = 8f;
+
+        /// <summary>Upward velocity (m/s) a sweep hit is clamped to, so a
+        /// tripped NPC slides and falls instead of being launched far.</summary>
+        [SerializeField] private float m_maxSweepUpVelocity = 3f;
+
+        // -------------------------------------------------------------------------
         // Internal state
         // -------------------------------------------------------------------------
 
@@ -86,6 +98,10 @@ namespace WhackySlappy.NPC
         private float m_settleTimer = 0f;
         private float m_hitCooldownTimer = 0f;
         private Vector3 m_wanderTarget = Vector3.zero;
+
+        // World half-height from the root pivot down to the feet, cached in
+        // Start from the body capsule; sweep impulses push exactly there.
+        private float m_feetHalfHeight = 0.8f;
 
         // Cached player transform: found once, reused every physics tick
         // instead of FindAnyObjectByType per tick. Unity's null check
@@ -146,6 +162,12 @@ namespace WhackySlappy.NPC
 
             // Assign head collider for hit-cooldown filtering.
             m_headCollider = GetComponentInChildren<Collider>();
+
+            // Cache the feet offset for sweep impulses: same world
+            // half-height formula as ApplyLowCenterOfMass.
+            var bodyCapsule = GetComponentInChildren<CapsuleCollider>();
+            if (bodyCapsule != null)
+                m_feetHalfHeight = bodyCapsule.height * bodyCapsule.transform.lossyScale.y * 0.5f;
         }
 
         private void FixedUpdate()
@@ -192,6 +214,63 @@ namespace WhackySlappy.NPC
 
             m_state = State.Tumbling;
             m_hitCooldownTimer = m_hitCooldown;
+            m_settleTimer = 0f;
+        }
+
+        /// <summary>
+        /// Explicit interface entry point: SlapHand and LegSweep call OnHit
+        /// through ISlappable, and interface default methods are not callable
+        /// on the concrete type, so we dispatch on Kind here. Slap keeps the
+        /// existing OnSlapped path (the hand applies its own force); Sweep
+        /// runs the new trip handler below.
+        /// </summary>
+        void ISlappable.OnHit(in SlapHitInfo hit)
+        {
+            if (hit.Kind == SlapKind.Sweep)
+                OnSwept(in hit);
+            else
+                OnSlapped(hit.Impulse, hit.Point);
+        }
+
+        /// <summary>
+        /// Leg-sweep reaction: push at the feet so the base slides out from
+        /// under the body, add topple torque about the sweep tangent's
+        /// horizontal axis, clamp upward velocity so the NPC is not launched
+        /// far, and force Tumbling so the normal self-righting sequence runs.
+        /// </summary>
+        private void OnSwept(in SlapHitInfo hit)
+        {
+            Vector3 impulse = hit.Impulse;
+
+            // Horizontal part of the impulse is the sweep tangent.
+            Vector3 tangent = impulse;
+            tangent.y = 0f;
+            bool hasTangent = tangent.sqrMagnitude > 0.0001f;
+            if (hasTangent)
+                tangent.Normalize();
+
+            float prevUp = m_rb.linearVelocity.y;
+
+            // Impulse at the feet, not the body centre.
+            Vector3 feet = m_rb.position - Vector3.up * m_feetHalfHeight;
+            m_rb.AddForceAtPosition(impulse, feet, ForceMode.Impulse);
+
+            // Topple spin: axis perpendicular to the tangent, pitching the
+            // body back as the feet slide forward.
+            if (hasTangent)
+                m_rb.AddTorque(Vector3.Cross(tangent, Vector3.up) * m_sweepTorque, ForceMode.Force);
+
+            // Clamp upward velocity the sweep itself adds (a slap may already
+            // have launched us higher — then leave that launch alone).
+            if (prevUp < m_maxSweepUpVelocity && m_rb.linearVelocity.y > m_maxSweepUpVelocity)
+            {
+                Vector3 v = m_rb.linearVelocity;
+                v.y = m_maxSweepUpVelocity;
+                m_rb.linearVelocity = v;
+            }
+
+            m_hitCooldownTimer = m_hitCooldown;
+            m_state = State.Tumbling;
             m_settleTimer = 0f;
         }
 
