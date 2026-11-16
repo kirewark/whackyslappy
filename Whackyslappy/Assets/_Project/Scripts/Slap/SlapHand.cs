@@ -68,6 +68,11 @@ namespace WhackySlappy.Slap
         /// Default keeps fingers along local +Z (forward, away from camera).</summary>
         [SerializeField] private Vector3 m_handModelEuler = Vector3.zero;
 
+        /// <summary>Uniform local scale of the HandModelPivot. 2.6 keeps the
+        /// hand clearly visible in the lower-right of the view (playtest:
+        /// the unscaled model read as a tiny hand at the far-right edge).</summary>
+        [SerializeField] private float m_handModelScale = 2.6f;
+
         // -------------------------------------------------------------------------
         // Debug: impulse vector (Plan B4)
         // -------------------------------------------------------------------------
@@ -78,7 +83,10 @@ namespace WhackySlappy.Slap
         public WhackySlappy.Player.PlayerInputReader InputReader { get; set; }
         public WhackySlappy.Player.FirstPersonController Player { get; set; }
 
-        private readonly Vector3 m_restPosition = new Vector3(0.35f, -0.3f, 0.5f);
+        // Rest offset in camera space: pulled ~25% toward screen centre in x
+        // (0.35 -> 0.26) so the enlarged hand sits lower-right without
+        // covering the crosshair. z stays 0.5 (> near clip margin of 0.35).
+        private readonly Vector3 m_restPosition = new Vector3(0.26f, -0.3f, 0.5f);
         private readonly Vector3 m_windUpPosition = new Vector3(0.55f, -0.2f, 0.35f);
 
         private enum SwingPhase { Idle, Active }
@@ -119,12 +127,13 @@ namespace WhackySlappy.Slap
             Destroy(handVisual.GetComponent<Collider>());
             handVisual.GetComponent<MeshRenderer>().enabled = false;
 
-            // Unscaled pivot under the scaled cube so the model keeps the
-            // cube's pose without inheriting its non-uniform scale. The
-            // sweep uses casts only, so no collider is needed on the model.
+            // Pivot under the scaled cube so the model keeps the cube's pose;
+            // m_handModelScale enlarges it uniformly so the hand is clearly
+            // visible on screen. The sweep uses casts only, so no collider
+            // is needed on the model.
             var handModelPivot = new GameObject("HandModelPivot");
             handModelPivot.transform.SetParent(handVisual.transform, false);
-            handModelPivot.transform.localScale = Vector3.one;
+            handModelPivot.transform.localScale = Vector3.one * m_handModelScale;
             var handModel = HandModelBuilder.Build(handModelPivot.transform);
             // Fingers along local +Z (forward, away from the camera) by
             // default; tweak in the Inspector if the pose looks wrong.
