@@ -146,6 +146,10 @@ namespace WhackySlappy.NPC
         private float m_squashTime = 1f;
         private bool m_squashActive = false;
 
+        // Re-entry guard for Despawn: Tumbling exit and CheckDespawn can both
+        // fire in one tick, which would double-notify the spawner.
+        private bool m_despawned = false;
+
         // Cached player transform: found once, reused every physics tick
         // instead of FindAnyObjectByType per tick. Unity's null check
         // re-finds it if the player object is ever destroyed.
@@ -719,6 +723,9 @@ namespace WhackySlappy.NPC
 
         private void Despawn()
         {
+            if (m_despawned)
+                return;
+            m_despawned = true;
             Debug.Log("[NpcController] Despawn " + name + " at " + transform.position + " state=" + m_state);
             // Notify the spawner before destroying.
             if (m_spawner != null)
@@ -742,6 +749,7 @@ namespace WhackySlappy.NPC
             m_settleTimer = 0f;
             m_hitCooldownTimer = 0f;
             m_sweepCooldownTimer = 0f;
+            m_despawned = false;
             m_rb.linearVelocity = Vector3.zero;
             m_rb.angularVelocity = Vector3.zero;
             transform.rotation = Quaternion.identity;
