@@ -115,15 +115,16 @@ namespace WhackySlappy.EditorTools
 
         private static void ApplyImportSettings(string clipPath)
         {
-            AudioImporter importer = AssetDatabase.GetImporter(clipPath) as AudioImporter;
+            AudioImporter importer = AssetImporter.GetAtPath(clipPath) as AudioImporter;
             if (importer == null) return;
 
             AudioImporterSampleSettings wanted = new AudioImporterSampleSettings
             {
-                loadType = AudioDataLoadType.DecompressOnLoad,
+                loadType = AudioClipLoadType.DecompressOnLoad,
                 compressionFormat = AudioCompressionFormat.Vorbis,
-                sampleRateSetting = AudioSampleRateSetting.KeepOriginalRate,
+                sampleRateSetting = AudioSampleRateSetting.PreserveSampleRate,
                 quality = 0.5f,
+                preloadAudioData = true,
             };
 
             bool changed = false;
@@ -131,11 +132,6 @@ namespace WhackySlappy.EditorTools
             if (!importer.forceToMono)
             {
                 importer.forceToMono = true;
-                changed = true;
-            }
-            if (!importer.preloadAudioData)
-            {
-                importer.preloadAudioData = true;
                 changed = true;
             }
             if (!SettingsMatch(importer.defaultSampleSettings, wanted))
@@ -159,6 +155,7 @@ namespace WhackySlappy.EditorTools
             return current.loadType == wanted.loadType &&
                    current.compressionFormat == wanted.compressionFormat &&
                    current.sampleRateSetting == wanted.sampleRateSetting &&
+                   current.preloadAudioData == wanted.preloadAudioData &&
                    Mathf.Abs(current.quality - wanted.quality) < 0.01f;
         }
     }
