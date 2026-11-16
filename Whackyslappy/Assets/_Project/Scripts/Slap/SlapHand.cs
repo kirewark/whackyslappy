@@ -13,14 +13,35 @@ namespace WhackySlappy.Slap
     {
         [Header("Tuning")]
         [SerializeField] private float m_cooldown = 0.4f;
-        [SerializeField] private float m_reach = 0.8f;
+        [SerializeField] private float m_reach = 1.3f;
         [SerializeField] private float m_windUpDuration = 0.08f;
         [SerializeField] private float m_strikeDuration = 0.12f;
         [SerializeField] private float m_recoverDuration = 0.20f;
-        [SerializeField] private float m_sweepRadius = 0.2f;
+        [SerializeField] private float m_sweepRadius = 0.35f;
         [SerializeField] private float m_forceMultiplier = 1.5f;
         [SerializeField] private float m_maxImpulse = 30f;
+
+        // -------------------------------------------------------------------------
+        // Tuning: impulse direction (Plan B1)
+        // -------------------------------------------------------------------------
+
+        /// <summary>Upward bias applied to the slap impulse direction.
+        /// Combined with handVelocity + forwardBias*forward + upBias*up, then normalised.</summary>
         [SerializeField] private float m_upBias = 0.4f;
+
+        /// <summary>Forward bias applied to the slap impulse direction.
+        /// The hand velocity is biased toward the camera's forward (transform.forward).</summary>
+        [SerializeField] private float m_forwardBias = 1.0f;
+
+        /// <summary>Minimum impulse magnitude clamped to the slap impulse.</summary>
+        [SerializeField] private float m_minImpulse = 6f;
+
+        // -------------------------------------------------------------------------
+        // Debug: impulse vector (Plan B4)
+        // -------------------------------------------------------------------------
+
+        /// <summary>Timestamp of the last slap hit for DrawRay visualisation.</summary>
+        private float m_lastHitTime = 0f;
 
         public WhackySlappy.Player.PlayerInputReader InputReader { get; set; }
         public WhackySlappy.Player.FirstPersonController Player { get; set; }
@@ -90,18 +111,47 @@ namespace WhackySlappy.Slap
                         continue;
 
                     var handVelocity = delta / Time.fixedDeltaTime;
-                    var impulse = handVelocity * m_forceMultiplier;
-                    var magnitude = impulse.magnitude;
+                    var magnitude = handVelocity.magnitude;
+                    Vector3 impulse = Vector3.zero;
                     if (magnitude > 0.0001f)
-                        impulse = impulse / magnitude * Mathf.Clamp(magnitude, 6f, m_maxImpulse);
-                    impulse += Vector3.up * m_upBias;
+                    {
+                        // Plan B1: full impulse direction formula
+                        Vector3 dir =
+                            (handVelocity.normalized
+                             + m_forwardBias * transform.forward
+                             + m_upBias * transform.up).normalized;
+                        float impulseMag = Mathf.Clamp(magnitude * m_forceMultiplier, m_minImpulse, m_maxImpulse);
+                        impulse = dir * impulseMag;
+
+                        // Plan B3: log hand speed and impulse for tuning.
+                        Debug.Log(
+                            $"Slap: handSpeed={magnitude:F1} m/s, impulseMag={impulseMag:F1}, "
+                            + $"strength={strength:F2}");
+                    }
 
                     rb.AddForceAtPosition(impulse, kvp.Value, ForceMode.Impulse);
                     var slappable = kvp.Key.GetComponent<ISlappable>();
                     slappable?.OnSlapped(impulse, kvp.Value);
+
+                    // Strength (0..1) derived from raw impulse magnitude.
+                    var rawMagnitude = handVelocity.magnitude * m_forceMultiplier;
+                    float strength = Mathf.Clamp01((rawMagnitude - m_minImpulse) / (m_maxImpulse - m_minImpulse));
+
                     m_lastHitPoint = kvp.Value;
                     m_lastHitImpulse = impulse;
+                    m_lastHitTime = Time.time;
+
+                    // Feed impact strength into audio and visual feedback.
+                    SlapAudio.Play(kvp.Value, strength);
+                    HitFeedback.Trigger(strength);
                 }
+            }
+
+            // Plan B4: draw impulse vector for one second after each hit.
+            if (m_lastHitImpulse.sqrMagnitude > 0.0001f
+                && Time.time - m_lastHitTime < 1f)
+            {
+                Debug.DrawRay(m_lastHitPoint, m_lastHitImpulse, Color.red, 1f);
             }
 
             m_prevWorldPos = cur;

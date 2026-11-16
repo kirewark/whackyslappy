@@ -25,14 +25,8 @@ namespace WhackySlappy.NPC
         /// <summary>Minimum distance (m) to the player before stopping the push.</summary>
         [SerializeField] private float m_wanderStopDistance = 1.2f;
 
-        /// <summary>Self-righting torque multiplier in Wander state.</summary>
-        [SerializeField] private float m_uprightStrengthWander = 8.0f;
-
-        /// <summary>Self-righting angular-velocity damping.</summary>
+        /// <summary>Self-righting angular-velocity damping in Wander state.</summary>
         [SerializeField] private float m_uprightDampingWander = 2.0f;
-
-        /// <summary>Self-righting torque multiplier in GettingUp state.</summary>
-        [SerializeField] private float m_uprightStrengthGettingUp = 15.0f;
 
         /// <summary>Self-righting angular-velocity damping in GettingUp state.</summary>
         [SerializeField] private float m_uprightDampingGettingUp = 3.0f;
@@ -57,6 +51,23 @@ namespace WhackySlappy.NPC
 
         /// <summary>Color for the head mesh (randomized on spawn).</summary>
         [SerializeField] private Color m_headColor = Color.cyan;
+
+        // -------------------------------------------------------------------------
+        // Balance tuning (Plan A1, A3)
+        // -------------------------------------------------------------------------
+
+        /// <summary>Offset of the rigidbody's center of mass above the feet (m).
+        /// Lower values keep the NPC bottom-heavy so it rights itself like a
+        /// inflatable punching clown.</summary>
+        [SerializeField] private float m_centerOfMassOffset = 0.3f;
+
+        /// <summary>Angle (degrees) between the NPC's up and world up at which
+        /// Wander treats the NPC as fallen and switches to Tumbling.</summary>
+        [SerializeField] private float m_tiltedThreshold = 45f;
+
+        /// <summary>Base self-righting torque multiplier (wider range 25-40 for
+        /// stronger upright recovery in both Wander and GettingUp).</summary>
+        [SerializeField] private float m_uprightStrength = 30f;
 
         // -------------------------------------------------------------------------
         // Internal state
@@ -88,6 +99,8 @@ namespace WhackySlappy.NPC
             m_rb.linearDamping = 0.1f;
             m_rb.angularDamping = 0.5f;
             m_rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+            // Plan A1: lower center of mass so gravity doesn't tip the NPC.
+            m_rb.centerOfMass = new Vector3(0f, m_centerOfMassOffset, 0f);
         }
 
         private void Start()
@@ -109,8 +122,7 @@ namespace WhackySlappy.NPC
             {
                 case State.Wander:
                     UpdateWander();
-                    ApplySelfRighting(m_uprightStrengthWander, m_uprightDampingWander);
-                    CheckTransitionToTumbling();
+                    ApplySelfRighting(m_uprightStrength, m_uprightDampingWander);
                     break;
 
                 case State.Tumbling:
@@ -120,7 +132,7 @@ namespace WhackySlappy.NPC
                     break;
 
                 case State.GettingUp:
-                    ApplySelfRighting(m_uprightStrengthGettingUp, m_uprightDampingGettingUp);
+                    ApplySelfRighting(m_uprightStrength, m_uprightDampingGettingUp);
                     CheckTransitionToWander();
                     break;
             }
@@ -153,6 +165,18 @@ namespace WhackySlappy.NPC
 
         private void UpdateWander()
         {
+            // Plan A2: if the NPC is tilted more than the threshold, it has
+            // fallen over gently (not from a slap) — go to Tumbling so the
+            // normal recovery sequence runs.
+            float tiltAngle = Vector3.Angle(transform.up, Vector3.up);
+            if (tiltAngle > m_tiltedThreshold)
+            {
+                m_state = State.Tumbling;
+                m_hitCooldownTimer = m_hitCooldown;
+                m_settleTimer = 0f;
+                return; // no wander push while fallen
+            }
+
             // Find the player for distance check and direction.
             var player = Object.FindAnyObjectByType<CharacterController>();
 
@@ -210,13 +234,17 @@ namespace WhackySlappy.NPC
         // -------------------------------------------------------------------------
 
         /// <summary>
-        /// Applies a torque that keeps the NPC upright.
-        /// torque = Cross(up, up_world) * strength - angularVelocity * damping
+        /// Applies a torque that keeps the NPC upright (Plan A3: tilt-proportional).
+        /// torque = Cross(up, up_world) * strength * (1 + tilt/90°) - angularVelocity * damping
+        /// The tilt factor doubles the righting torque when the NPC is near-flat (90°),
+        /// so even a gently tipped NPC recovers firmly.
         /// </summary>
         private void ApplySelfRighting(float strength, float damping)
         {
             Vector3 cross = Vector3.Cross(transform.up, Vector3.up);
-            Vector3 torque = cross * strength - m_rb.angularVelocity * damping;
+            float tilt = Vector3.Angle(transform.up, Vector3.up);
+            float tiltFactor = 1f + tilt / 90f; // 1.0 at upright → ~2.0 at 90° flat
+            Vector3 torque = cross * strength * tiltFactor - m_rb.angularVelocity * damping;
             m_rb.AddTorque(torque, ForceMode.Force);
         }
 
@@ -371,8 +399,15 @@ namespace WhackySlappy.NPC
             rb.angularDamping = 0.5f;
             rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
 
+            // Plan A4: snap feet to y=0 on spawn (match Start() position logic).
+            var capsule = body.GetComponent<CapsuleCollider>();
+            go.transform.position = new Vector3(position.x, capsule.height / 2f, position.z);
+
             var controller = go.AddComponent<NpcController>();
             controller.m_spawner = spawner;
+
+            // Plan A1: set center of mass after controller is created.
+            controller.GetComponent<Rigidbody>().centerOfMass = new Vector3(0f, controller.m_centerOfMassOffset, 0f);
 
             return controller;
         }
