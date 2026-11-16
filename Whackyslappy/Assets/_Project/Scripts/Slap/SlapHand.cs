@@ -42,7 +42,7 @@ namespace WhackySlappy.Slap
 
         /// <summary>Drag below this many accumulated mouse-delta pixels
         /// counts as a plain click and does the default swing.</summary>
-        [SerializeField] private float m_minDragPixels = 25f;
+        [SerializeField] private float m_minDragPixels = 12f;
 
         /// <summary>Distance (m, camera space) the hand starts offset opposite
         /// the drag direction before sweeping through the rest point.</summary>
@@ -51,6 +51,10 @@ namespace WhackySlappy.Slap
         /// <summary>Weight of the drag direction added to the impulse
         /// direction of a directional swing.</summary>
         [SerializeField] private float m_directionalBias = 0.8f;
+
+        /// <summary>Exponential smoothing rate (1/s, unscaled time) for the
+        /// live aim preview and the rotation reset after a swing.</summary>
+        [SerializeField] private float m_aimResponse = 14f;
 
         // -------------------------------------------------------------------------
         // Debug: impulse vector (Plan B4)
@@ -80,6 +84,8 @@ namespace WhackySlappy.Slap
         private Vector3 m_aimStartLocal;            // wind-up target, camera-local
         private Vector3 m_dirStrikeLocal;           // strike-end target, camera-local
         private Vector2 m_dirAimNorm;               // normalized drag (x=right, y=up, camera space)
+        private float m_aimAngleDeg;                // drag angle (deg) held as hand roll during a directional swing
+        private Vector3 m_swingFromLocal;           // hand local pose captured when a swing starts
 
         // Cached query buffers: avoid per-physics-tick allocations.
         private readonly Dictionary<Collider, Vector3> m_hitPoints = new();
@@ -250,6 +256,33 @@ namespace WhackySlappy.Slap
                         StartDirectionalSwing(aim);
                     return;
                 }
+
+                // Live aim preview: while the drag is real, wind the hand
+                // back opposite the drag and roll it to the drag angle so
+                // the direction is visible before release. A near-zero drag
+                // keeps the hand at rest with no roll, so a plain click
+                // looks exactly like the default swing.
+                if (m_aiming)
+                {
+                    Vector2 aimVec = InputReader.AimDelta;
+                    float aimMag = aimVec.magnitude;
+                    Vector3 windupTarget = m_restPosition;
+                    Quaternion rotTarget = Quaternion.identity;
+                    if (aimMag > 0.0001f)
+                    {
+                        Vector3 dirLocal = new Vector3(aimVec.x / aimMag, aimVec.y / aimMag, 0f);
+                        windupTarget = m_restPosition -
+                            dirLocal * (m_aimStartOffset * Mathf.Min(1f, aimMag / 60f));
+                        if (aimMag >= m_minDragPixels)
+                            rotTarget = Quaternion.AngleAxis(
+                                Mathf.Atan2(aimVec.y, aimVec.x) * Mathf.Rad2Deg, Vector3.forward);
+                    }
+                    float blend = 1f - Mathf.Exp(-m_aimResponse * Time.unscaledDeltaTime);
+                    transform.localPosition = Vector3.Lerp(
+                        transform.localPosition, windupTarget, blend);
+                    transform.localRotation = Quaternion.Slerp(
+                        transform.localRotation, rotTarget, blend);
+                }
             }
 
             if (m_phase != SwingPhase.Active)
@@ -265,9 +298,10 @@ namespace WhackySlappy.Slap
 
             if (elapsed < m_windUpDuration)
             {
-                // Wind-up phase: rest -> wind-up (or aim-start for a drag swing)
+                // Wind-up phase: current pose (rest, or the live aim pose)
+                // -> wind-up target.
                 t = elapsed / m_windUpDuration;
-                transform.localPosition = Vector3.Lerp(m_restPosition, windUpPos, t);
+                transform.localPosition = Vector3.Lerp(m_swingFromLocal, windUpPos, t);
             }
             else if (elapsed < m_windUpDuration + m_strikeDuration)
             {
@@ -287,6 +321,27 @@ namespace WhackySlappy.Slap
                     m_phase = SwingPhase.Idle;
                     m_directional = false;
                     m_hitThisSwing.Clear();
+                    transform.localPosition = m_restPosition;
+                    transform.localRotation = Quaternion.identity;
+                }
+            }
+
+            // Hand roll: a directional swing holds the drag angle through
+            // the wind-up and strike, then eases back to identity during
+            // recover. The default swing never touches rotation.
+            if (m_directional)
+            {
+                if (elapsed < m_windUpDuration + m_strikeDuration)
+                {
+                    transform.localRotation = Quaternion.AngleAxis(
+                        m_aimAngleDeg, Vector3.forward);
+                }
+                else
+                {
+                    float rotBlend = 1f - Mathf.Exp(
+                        -m_aimResponse * Time.unscaledDeltaTime);
+                    transform.localRotation = Quaternion.Slerp(
+                        transform.localRotation, Quaternion.identity, rotBlend);
                 }
             }
         }
@@ -294,6 +349,7 @@ namespace WhackySlappy.Slap
         private void StartSwing()
         {
             m_swingStartTime = Time.time;
+            m_swingFromLocal = transform.localPosition;
             m_prevWorldPos = transform.position;
             m_phase = SwingPhase.Active;
             m_directional = false;
@@ -310,11 +366,15 @@ namespace WhackySlappy.Slap
             float angle = Mathf.Atan2(aim.y, aim.x);
             float cos = Mathf.Cos(angle);
             float sin = Mathf.Sin(angle);
+            m_aimAngleDeg = angle * Mathf.Rad2Deg;
 
             // Path direction in the camera right/up plane (hand local x/y).
             Vector3 pathDir = new Vector3(cos, sin, 0f);
 
-            m_aimStartLocal = m_restPosition - pathDir * m_aimStartOffset;
+            // Wind-up target = the live aim pose the preview left the hand
+            // in, so the swing continues smoothly from what the player
+            // already sees.
+            m_aimStartLocal = transform.localPosition;
             // Never let a downward drag's wind-up pose sink through the floor.
             m_aimStartLocal.y = Mathf.Max(m_aimStartLocal.y, -0.5f);
 
@@ -338,10 +398,17 @@ namespace WhackySlappy.Slap
             m_aiming = false;
             if (Player != null)
                 Player.LookSuppressed = false;
+            if (m_phase == SwingPhase.Idle)
+            {
+                transform.localPosition = m_restPosition;
+                transform.localRotation = Quaternion.identity;
+            }
         }
 
         private void OnDrawGizmos()
         {
+            if (!m_debugLog)
+                return;
             Gizmos.color = Color.yellow;
             Gizmos.DrawWireSphere(transform.position, m_sweepRadius);
             if (m_lastHitImpulse.sqrMagnitude > 0.0001f)
