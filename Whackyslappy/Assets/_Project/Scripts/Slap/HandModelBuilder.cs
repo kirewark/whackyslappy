@@ -6,31 +6,31 @@ namespace WhackySlappy.Slap
 {
     /// <summary>
     /// Builds a chunky cartoon white-glove open hand from primitives
-    /// (rounded palm, four slightly fanned fingers, outward-angled thumb,
-    /// wrist cuff) with all colliders destroyed and shadows off. One-shot
-    /// builder: no per-frame work.
+    /// (rounded palm, four clearly splayed fingers with rounded tips, an
+    /// outward-angled thumb, and a thin tapered wrist sleeve) with all
+    /// colliders destroyed and shadows off. One-shot builder: no per-frame
+    /// work.
     ///
     /// Convention (matches SlapHand's +Z-forward hand): fingers point along
-    /// local +Z (forward), the thumb sits on the local +X side angled 45 deg
-    /// outward and forward, and the palm's flat face normal points along
-    /// local -Y (SlapHand's Rz(-90) roll maps -Y to -X, facing the screen
-    /// centre; +X maps to -Y so the thumb hangs low). The wrist is at local
-    /// z = 0 (SlapHand pivots the model there) and the glove extends to
-    /// about z 0.20: palm 0.11 wide (X) x 0.035 thick (Y) x 0.10 long (Z),
-    /// thin fingers (0.022 dia) and a small flattened cuff at the -Z end, so
-    /// at SlapHand's uniform scale 3 the glove is about 0.6 m long.
+    /// local +Z (forward), the thumb sits on the local +X side angled ~55 deg
+    /// off the index direction and slightly out of the palm plane, and the
+    /// back of the hand faces local +Y. The wrist is at local z = 0 (SlapHand
+    /// pivots the model there). Palm ~0.10 wide (X) x ~0.05 thick (Y) x 0.10
+    /// long (Z), fingers 0.024 dia fanned -24..+24 deg about local Y along a
+    /// knuckle arc, and a thin (0.064 dia) sleeve extending backward along
+    /// -Z so no flat end cap faces the camera in the default pose.
     /// </summary>
     public static class HandModelBuilder
     {
-        // Cartoon white-glove colours: glove white and a slightly grey
-        // wrist cuff for the shared fallback materials.
+        // Cartoon white-glove colours: glove white and a slightly grey wrist
+        // sleeve for the shared fallback materials.
         private static readonly Color s_gloveColor = new Color(0.97f, 0.97f, 0.97f);
-        private static readonly Color s_cuffColor = new Color(0.9f, 0.9f, 0.9f);
+        private static readonly Color s_sleeveColor = new Color(0.9f, 0.9f, 0.9f);
 
-        // One shared glove material, and one shared cuff material, created
+        // One shared glove material, and one shared sleeve material, created
         // lazily when Build is called without one.
         private static Material s_sharedMaterial;
-        private static Material s_cuffMaterial;
+        private static Material s_sleeveMaterial;
 
         /// <summary>
         /// Creates a "HandModel" root under <paramref name="parent"/> (local
@@ -51,60 +51,77 @@ namespace WhackySlappy.Slap
             root.transform.localScale = Vector3.one;
 
             var handMat = material != null ? material : GetSharedMaterial();
-            var cuffMat = material != null ? material : GetSharedCuffMaterial();
+            var sleeveMat = material != null ? material : GetSharedSleeveMaterial();
 
-            // Palm: unit sphere scaled into a true-proportion glove slab,
-            // wrist at local z = 0 so the palm body spans z 0..0.10.
-            MakePart("Palm", PrimitiveType.Sphere, root.transform,
-                new Vector3(0f, 0f, 0.05f), Quaternion.identity,
-                new Vector3(0.11f, 0.035f, 0.1f), handMat);
+            // Palm: three overlapping unit spheres scaled to a flattened
+            // slab ~0.10 wide (X) x 0.05 thick (Y) x 0.10 long (Z), wrist
+            // end at local z = 0, giving a rounded-box back-of-hand.
+            var palmScale = new Vector3(0.1f, 0.05f, 0.1f);
+            MakePart("Palm_Lower", PrimitiveType.Sphere, root.transform,
+                new Vector3(0f, 0f, 0.018f), Quaternion.identity, palmScale, handMat);
+            MakePart("Palm_Mid", PrimitiveType.Sphere, root.transform,
+                new Vector3(0f, 0f, 0.055f), Quaternion.identity, palmScale, handMat);
+            MakePart("Palm_Upper", PrimitiveType.Sphere, root.transform,
+                new Vector3(0f, 0f, 0.088f), Quaternion.identity, palmScale, handMat);
 
-            // Four slim finger capsules with visible gaps (0.022 diameter
-            // on 0.028 centres, leaving ~0.006 between fingers), fanned
-            // 2.5-8 deg outward in the X-Z plane. The capsule primitive is
+            // Four finger capsules on a knuckle arc (0.024 dia so neighbours
+            // never touch), fanned -24/-8/+8/+24 deg about local Y: outer
+            // fingers splay more, middle longest. The capsule primitive is
             // 2.0 tall along its local Y axis, so an Euler(90, fan, 0)
             // rotation points it forward and the yaw fans it outward.
             var fingerNames = new[] { "Finger_Index", "Finger_Middle", "Finger_Ring", "Finger_Pinky" };
-            var fingerX = new[] { 0.042f, 0.014f, -0.014f, -0.042f };
-            var fingerLen = new[] { 0.085f, 0.095f, 0.08f, 0.07f }; // middle longest, pinky shortest
-            var fingerFanDeg = new[] { 8f, 2.5f, -2.5f, -8f };
-            const float FingerDiameter = 0.022f; // slim, true glove proportions
-            const float FingerBaseZ = 0.09f;     // where the fingers meet the palm edge
+            var fingerX = new[] { 0.040f, 0.013f, -0.013f, -0.050f };
+            var fingerBaseZ = new[] { 0.085f, 0.097f, 0.092f, 0.065f };
+            var fingerLen = new[] { 0.075f, 0.095f, 0.088f, 0.065f }; // middle longest, pinky shortest
+            var fingerFanDeg = new[] { 24f, 8f, -8f, -24f };
+            const float FingerDiameter = 0.024f;
 
             for (int fi = 0; fi < fingerNames.Length; fi++)
             {
                 float fingerLength = fingerLen[fi];
                 var fingerRot = Quaternion.Euler(90f, fingerFanDeg[fi], 0f);
-                var fingerDir = fingerRot * Vector3.up; // capsule long axis, fanned forward
-                var fingerCenter = new Vector3(fingerX[fi], 0f, FingerBaseZ)
+                var fingerDir = fingerRot * Vector3.up; // capsule long axis, fanned outward
+                var fingerCenter = new Vector3(fingerX[fi], 0f, fingerBaseZ[fi])
                     + fingerDir * (fingerLength * 0.5f);
                 MakePart(fingerNames[fi], PrimitiveType.Capsule, root.transform,
                     fingerCenter, fingerRot,
                     new Vector3(FingerDiameter, fingerLength, FingerDiameter), handMat);
+
+                // Rounded fingertip cap so ends are not hard-cut.
+                MakePart("FingerTip_" + fingerNames[fi].Substring(7), PrimitiveType.Sphere,
+                    root.transform,
+                    new Vector3(fingerX[fi], 0f, fingerBaseZ[fi])
+                        + fingerDir * fingerLength,
+                    Quaternion.identity,
+                    new Vector3(FingerDiameter, FingerDiameter, FingerDiameter), handMat);
             }
 
-            // Thumb: slim capsule on +X (SlapHand's Rz(-90) roll maps +X
-            // to camera -Y, so the thumb hangs low on the right-side hand),
-            // angled 45 deg outward and forward from the palm edge near the
-            // wrist, with its axis in the X-Z plane.
-            var thumbRot = Quaternion.Euler(90f, 45f, 0f);
-            var thumbDir = thumbRot * Vector3.up;
+            // Thumb: base near the wrist on +X, aimed ~55 deg off the index
+            // direction (index sits +24 from +Z, so the thumb axis is 79 deg
+            // from +Z) and tilted 10 deg out of the palm plane so it
+            // separates clearly from the finger fan.
             var thumbBase = new Vector3(0.05f, 0f, 0.025f);
-            const float ThumbLength = 0.07f;
-            const float ThumbDiameter = 0.028f;
+            var thumbDir = new Vector3(0.978f, -0.174f, 0.122f);
+            const float ThumbLength = 0.075f;
+            const float ThumbDiameter = 0.03f;
+            var thumbRot = Quaternion.LookRotation(thumbDir, Vector3.up);
             MakePart("Thumb", PrimitiveType.Capsule, root.transform,
                 thumbBase + thumbDir * (ThumbLength * 0.5f), thumbRot,
                 new Vector3(ThumbDiameter, ThumbLength, ThumbDiameter), handMat);
+            MakePart("FingerTip_Thumb", PrimitiveType.Sphere, root.transform,
+                thumbBase + thumbDir * ThumbLength, Quaternion.identity,
+                new Vector3(ThumbDiameter, ThumbDiameter, ThumbDiameter), handMat);
 
-            // Cuff: short flattened cylinder at the wrist (z -0.02..0.04,
-            // overlapping the palm's -Z end), 0.13 across X, flattened to
-            // 0.078 thick in Y (cylinder y-scale ~0.6 of 0.13) so it reads
-            // as a glove opening instead of a fat tube. The cylinder
-            // primitive is 2.0 tall along local Y, so Euler(90,0,0) points
-            // its axis forward along Z.
-            MakePart("Cuff", PrimitiveType.Cylinder, root.transform,
-                new Vector3(0f, 0f, 0.01f), Quaternion.Euler(90f, 0f, 0f),
-                new Vector3(0.13f, 0.06f, 0.078f), cuffMat);
+            // Wrist sleeve: a thin capsule (0.064 dia - narrower than the
+            // palm) running backward along -Z from the wrist, length 0.25,
+            // slightly tapered by a smaller sphere at the far end. No flat
+            // cylinder end cap ever faces the camera in the default pose.
+            MakePart("Wrist_Sleeve", PrimitiveType.Capsule, root.transform,
+                new Vector3(0f, 0f, -0.08f), Quaternion.Euler(90f, 0f, 0f),
+                new Vector3(0.064f, 0.19f, 0.064f), sleeveMat);
+            MakePart("Wrist_SleeveFar", PrimitiveType.Sphere, root.transform,
+                new Vector3(0f, 0f, -0.175f), Quaternion.identity,
+                new Vector3(0.055f, 0.055f, 0.055f), sleeveMat);
 
             return root.transform;
         }
@@ -159,21 +176,21 @@ namespace WhackySlappy.Slap
             return s_sharedMaterial;
         }
 
-        /// <summary>Returns the lazily created shared cuff material
+        /// <summary>Returns the lazily created shared wrist-sleeve material
         /// (slightly grey glove opening), or null if no fallback shader
         /// survived the build.</summary>
-        private static Material GetSharedCuffMaterial()
+        private static Material GetSharedSleeveMaterial()
         {
-            if (s_cuffMaterial != null) return s_cuffMaterial;
+            if (s_sleeveMaterial != null) return s_sleeveMaterial;
 
             var shader = FindFallbackShader();
             if (shader == null) return null;
 
-            s_cuffMaterial = new Material(shader);
-            s_cuffMaterial.color = s_cuffColor;
-            s_cuffMaterial.SetColor("_BaseColor", s_cuffColor);
-            ApplyMatte(s_cuffMaterial);
-            return s_cuffMaterial;
+            s_sleeveMaterial = new Material(shader);
+            s_sleeveMaterial.color = s_sleeveColor;
+            s_sleeveMaterial.SetColor("_BaseColor", s_sleeveColor);
+            ApplyMatte(s_sleeveMaterial);
+            return s_sleeveMaterial;
         }
 
         /// <summary>Shared matte setup for the glove materials.</summary>
@@ -206,7 +223,7 @@ namespace WhackySlappy.Slap
             // Domain reload can be disabled: drop the cached materials so
             // each play session builds fresh ones.
             s_sharedMaterial = null;
-            s_cuffMaterial = null;
+            s_sleeveMaterial = null;
         }
     }
 }

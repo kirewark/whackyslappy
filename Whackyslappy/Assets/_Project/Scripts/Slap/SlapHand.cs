@@ -94,9 +94,14 @@ namespace WhackySlappy.Slap
         /// the model -X side so it maps to +Y: thumb up. Rx(-8) then tilts
         /// the fingers ~8 deg upward: -8 about X sends +Z to
         /// (0, +sin 8, +cos 8) = (0, ~0.14, ~0.99): forward with a slight
-        /// upward tilt, thumb lands at (0, ~0.99, ~-0.14).</summary>
+        /// upward tilt, thumb lands at (0, ~0.99, ~-0.14).
+        /// Superseded: the splayed-hand pose verified by the offline preview
+        /// render — x 26 tips the fingers up ~26 deg, y -18 yaws the fan
+        /// ~18 deg toward the screen centre, z -190 rolls the hand so the
+        /// thumb (+X) splays up-left ~55 deg off the index toward the
+        /// crosshair side and the wrist/sleeve runs off the bottom edge.</summary>
         [SerializeField] private Vector3 m_handModelEuler =
-            new Vector3(-8f, 0f, -90f);
+            new Vector3(26f, -18f, -190f);
 
         /// <summary>Local scale of the HandModelPivot on a 1.0-uniform cube
         /// anchor. The model now carries true cartoon-glove proportions
@@ -107,7 +112,7 @@ namespace WhackySlappy.Slap
         /// model Y to camera X). Replaces the old anisotropic
         /// (4.5, 2.5, 1.4) that caused the tube look.</summary>
         [SerializeField] private Vector3 m_handModelScale =
-            new Vector3(3f, 3f, 3f);
+            new Vector3(3.2f, 3.2f, 3.2f);
 
         // -------------------------------------------------------------------------
         // Debug: impulse vector (Plan B4)
@@ -120,18 +125,16 @@ namespace WhackySlappy.Slap
         public WhackySlappy.Player.FirstPersonController Player { get; set; }
 
         // Rest anchor (wrist pivot) in camera space: with the model's wrist
-        // at local z = 0 and uniform scale 3, the glove box is x
-        // 0.24..0.48 (cuff widest), y -0.61..-0.06 (thumb tip lowest, top
-        // edge stays below screen centre), z 0.76..1.44 (cuff back to
-        // middle fingertip). At z 1.44 the ~60 deg vertical FOV gives
-        // half-height 0.83 and, at 16:9, half-width 1.48; the thumb tip
-        // at z 1.15 sits inside half-height 0.66 (it is at -0.61), so the
-        // whole hand is fully inside the frustum and x >= 0.24 keeps it
-        // clear of the crosshair. The wind-up at z 0.7 keeps the cuff
-        // back edge at ~0.6, clear of the 0.4 near clip. The cube anchor
-        // sits at local zero, so this is the single rest offset the
+        // at local z = 0 and uniform scale 3.2, the preview-measured glove
+        // box is x ~0.10..0.85 (crosshair stays clear), y -0.60..-0.23
+        // (finger tips well below the screen-centre horizon), z ~0.46..1.50
+        // (sleeve back to middle fingertip): the ~60 deg vertical FOV gives
+        // half-height 0.32 at the near end, and the hand sits fully in the
+        // lower-right quadrant with the wrist running off the bottom edge.
+        // zmin ~0.46 keeps everything clear of the 0.4 near clip. The cube
+        // anchor sits at local zero, so this is the single rest offset the
         // aim/swing code lerps the root to (no double offset).
-        private readonly Vector3 m_restPosition = new Vector3(0.36f, -0.32f, 0.85f);
+        private readonly Vector3 m_restPosition = new Vector3(0.50f, -0.62f, 1.26f);
         private readonly Vector3 m_windUpPosition = new Vector3(0.55f, -0.35f, 0.7f);
 
         private enum SwingPhase { Idle, Active }
