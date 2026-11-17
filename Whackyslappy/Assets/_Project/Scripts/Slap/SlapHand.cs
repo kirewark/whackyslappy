@@ -85,23 +85,16 @@ namespace WhackySlappy.Slap
 
         /// <summary>Euler angles (deg) applied to the hand model root so the
         /// Inspector can fix the model's facing if the rest pose looks wrong.
-        /// Default (-8, 0, -90) holds the hand as an upright FINGERS-FORWARD
-        /// blade: Unity composes Euler as Rz applied first then Rx. Rz(-90)
-        /// maps the palm normal (model -Y) to (sin a, -cos a, 0) = -X at
-        /// a=-90, i.e. facing the screen centre from the right side, while
-        /// the model fingers (+Z) stay along +Z (camera forward). Because
-        /// Rz(-90) maps model +X to -Y, the glove builder puts the thumb on
-        /// the model -X side so it maps to +Y: thumb up. Rx(-8) then tilts
-        /// the fingers ~8 deg upward: -8 about X sends +Z to
-        /// (0, +sin 8, +cos 8) = (0, ~0.14, ~0.99): forward with a slight
-        /// upward tilt, thumb lands at (0, ~0.99, ~-0.14).
-        /// Superseded: the splayed-hand pose verified by the offline preview
-        /// render — x 26 tips the fingers up ~26 deg, y -18 yaws the fan
-        /// ~18 deg toward the screen centre, z -190 rolls the hand so the
-        /// thumb (+X) splays up-left ~55 deg off the index toward the
-        /// crosshair side and the wrist/sleeve runs off the bottom edge.</summary>
+        /// The model is now a RIGHT hand (thumb -X, palm normal -Y, fingers
+        /// +Z). Default (-20, -15, -90): Unity applies the Z roll first,
+        /// then the X pitch, then the Y yaw. Roll -90 maps the palm normal
+        /// -Y to -X (palm faces the screen centre, inward since the hand
+        /// sits at the lower right) and the thumb -X to +Y (thumb up).
+        /// Pitch -20 tilts model +Z toward +Y, so the fingers reach forward
+        /// and 20 degrees up. Yaw -15 then turns the fingers 15 degrees
+        /// toward the screen centre.</summary>
         [SerializeField] private Vector3 m_handModelEuler =
-            new Vector3(26f, -18f, -190f);
+            new Vector3(-20f, -15f, -90f);
 
         /// <summary>Local scale of the HandModelPivot on a 1.0-uniform cube
         /// anchor. The model now carries true cartoon-glove proportions
