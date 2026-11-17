@@ -20,7 +20,7 @@ namespace WhackySlappy.Player
 
         private Vector2 m_aimDelta;
 
-        [SerializeField, Min(1f)] private float m_maxAimMagnitude = 300f;
+        [SerializeField, Min(1f)] private float m_maxAimMagnitude = 500f;
 
         /// <summary>
         /// Horizontal + vertical move input (-1 to 1), from WASD / left stick.

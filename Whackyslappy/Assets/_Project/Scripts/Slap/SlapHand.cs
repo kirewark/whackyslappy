@@ -44,9 +44,10 @@ namespace WhackySlappy.Slap
         /// counts as a plain click and does the default swing.</summary>
         [SerializeField] private float m_minDragPixels = 10f;
 
-        /// <summary>Distance (m, camera space) the hand is offset toward the
-        /// drag direction while aiming: the hand follows the mouse pull.</summary>
-        [SerializeField] private float m_aimStartOffset = 0.5f;
+        /// <summary>Pull-back distance (m, camera space) used by the
+        /// m_strikeAlongDrag wind-up. The default slingshot preview uses
+        /// the elliptical m_aimOffsetExtent fields below instead.</summary>
+        [SerializeField] private float m_aimStartOffset = 0.9f;
 
         /// <summary>Weight of the strike direction added to the impulse
         /// direction of a directional swing.</summary>
@@ -65,16 +66,39 @@ namespace WhackySlappy.Slap
 
         /// <summary>Max yaw (deg, about camera up) the hand turns toward the
         /// pulled side while aiming, at full aim strength.</summary>
-        [SerializeField] private float m_aimYawDeg = 35f;
+        [SerializeField] private float m_aimYawDeg = 55f;
 
         /// <summary>Max pitch (deg, about camera right) the hand tilts while
         /// aiming at full aim strength. Dragging up lifts the fingertips
         /// up, dragging down tips them down (drag-up = up rule).</summary>
-        [SerializeField] private float m_aimPitchDeg = 30f;
+        [SerializeField] private float m_aimPitchDeg = 45f;
 
         /// <summary>Clamp (deg, both signs) for the mirror-symmetric aim
         /// roll about camera forward. Replaces the old hard +-70.</summary>
-        [SerializeField] private float m_aimRollDeg = 55f;
+                [SerializeField] private float m_aimRollDeg = 70f;
+
+        /// <summary>Drag distance (accumulated pixels) that saturates the
+        /// aim: the aim factor k reaches 1 (full deflection) here. The old
+        /// hard 60 px saturated too early and felt like a narrow cone.</summary>
+        [SerializeField] private float m_aimFullDragPixels = 160f;
+
+        /// <summary>Elliptical aim-preview half-axes (m, camera right/up):
+        /// horizontal reach up to X, vertical up to Y, so the wider drag
+        /// keeps the hand inside the view at max deflection.</summary>
+        [SerializeField] private float m_aimOffsetExtentX = 1.0f;
+        [SerializeField] private float m_aimOffsetExtentY = 0.75f;
+
+        /// <summary>Frustum containment caps for the aim preview: the hand
+        /// pivot is clamped to this factor times its own z (0.95 x the
+        /// half-width 1.03 per z = 0.9785, 0.8 x the half-height 0.577 per
+        /// z = 0.4616, measured at rest z = 1.26 with half-extents 1.3 / 0.73).</summary>
+        [SerializeField] private float m_frustumClampXFactor = 0.9785f;
+        [SerializeField] private float m_frustumClampYFactor = 0.4616f;
+
+        /// <summary>Strike-arc plane radius as a fraction of m_reach, split
+        /// X/Y so the wider horizontal arc stays visually plausible.</summary>
+        [SerializeField] private float m_strikeArcReachFactorX = 0.9f;
+        [SerializeField] private float m_strikeArcReachFactorY = 0.75f;
 
         /// <summary>Amplitude (deg) of the small wrist wobble added to the
         /// aim roll while aiming, so the held hand feels alive.</summary>
@@ -368,7 +392,7 @@ namespace WhackySlappy.Slap
                     Quaternion rotTarget = Quaternion.identity;
                     if (aimMag > 0.0001f)
                     {
-                        float k = Mathf.Min(1f, aimMag / 60f);
+                        float k = Mathf.Min(1f, aimMag / m_aimFullDragPixels);
                         Vector3 dirLocal = new Vector3(aimVec.x / aimMag, aimVec.y / aimMag, 0f);
                         // As the drag grows, the aim anchor eases from the
                         // off-centre rest x to the camera forward axis
@@ -378,7 +402,21 @@ namespace WhackySlappy.Slap
                         Vector3 aimAnchor = new Vector3(
                             Mathf.Lerp(m_restPosition.x, 0f, k),
                             m_restPosition.y, m_restPosition.z);
-                        followTarget = aimAnchor + dirLocal * (m_aimStartOffset * k);
+                        // Elliptical offset: wider horizontal (extent X)
+                        // than vertical (extent Y) so max deflection stays
+                        // in view, then clamped inside the camera frustum
+                        // using the actual pivot z of the preview target.
+                        followTarget = aimAnchor + new Vector3(
+                            dirLocal.x * m_aimOffsetExtentX,
+                            dirLocal.y * m_aimOffsetExtentY,
+                            0f) * k;
+                        float previewZ = followTarget.z;
+                        followTarget.x = Mathf.Clamp(followTarget.x,
+                            -m_frustumClampXFactor * previewZ,
+                            m_frustumClampXFactor * previewZ);
+                        followTarget.y = Mathf.Clamp(followTarget.y,
+                            -m_frustumClampYFactor * previewZ,
+                            m_frustumClampYFactor * previewZ);
                         if (aimMag >= m_minDragPixels)
                         {
                             // Roll that points the hand's top edge (local
@@ -510,7 +548,7 @@ namespace WhackySlappy.Slap
             float angle = Mathf.Atan2(aim.y, aim.x);
             float cos = Mathf.Cos(angle);
             float sin = Mathf.Sin(angle);
-            float aimK = Mathf.Min(1f, aimMag / 60f);
+            float aimK = Mathf.Min(1f, aimMag / m_aimFullDragPixels);
             // Same mirror-symmetric lean roll the preview showed, clamped
             // to +-m_aimRollDeg; the sign flips with the pull side, so the
             // backhand presents the back of the hand symmetrically.
@@ -566,10 +604,11 @@ namespace WhackySlappy.Slap
             // Anchoring at x = 0 makes horizontal strikes exact mirror
             // images sweeping through the same screen-centre target zone.
             float strikeEndZ = 0.75f + m_reach * 0.6f;
-            float planeRadius = m_reach * 0.6f;
+            float arcRadiusX = m_reach * m_strikeArcReachFactorX;
+            float arcRadiusY = m_reach * m_strikeArcReachFactorY;
             m_dirStrikeLocal = new Vector3(
-                strikeDir.x * planeRadius,
-                m_restPosition.y + strikeDir.y * planeRadius,
+                strikeDir.x * arcRadiusX,
+                m_restPosition.y + strikeDir.y * arcRadiusY,
                 strikeEndZ);
             m_dirAimNorm = strikeDir; // already unit length
 
