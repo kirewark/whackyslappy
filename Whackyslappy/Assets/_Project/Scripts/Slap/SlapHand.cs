@@ -107,6 +107,26 @@ namespace WhackySlappy.Slap
         /// <summary>Frequency (rad/s, unscaled time) of the wrist wobble.</summary>
         [SerializeField] private float m_aimWobbleFreq = 18f;
 
+        // -------------------------------------------------------------------------
+        // Tuning: drag-contact strikes (hand touches an NPC while aiming)
+        // -------------------------------------------------------------------------
+
+        /// <summary>Drag sweeps use a smaller sphere than a swing
+        /// (m_sweepRadius * this) so only a real contact registers.</summary>
+        [SerializeField] private float m_dragHitRadiusScale = 0.8f;
+
+        /// <summary>Impulse per m/s of hand world speed during a drag hit
+        /// (handSpeed * this, then clamped between m_min/m_maxImpulse).</summary>
+        [SerializeField] private float m_dragImpulsePerSpeed = 1.6f;
+
+        /// <summary>Hand world speed (m/s) below which a drag contact does
+        /// nothing, so a resting hand brushing an NPC never hits it.</summary>
+        [SerializeField] private float m_dragMinHitSpeed = 1.2f;
+
+        /// <summary>Seconds an NPC must wait before a drag can hit it
+        /// again inside the same hold.</summary>
+        [SerializeField] private float m_dragRehitCooldown = 0.35f;
+
         /// <summary>Euler angles (deg) applied to the hand model root so the
         /// Inspector can fix the model's facing if the rest pose looks wrong.
         /// The model is now a RIGHT hand (thumb -X, palm normal -Y, fingers
@@ -179,6 +199,12 @@ namespace WhackySlappy.Slap
         private readonly Dictionary<Collider, Vector3> m_hitPoints = new();
         private readonly RaycastHit[] m_sphereCastBuffer = new RaycastHit[32];
         private readonly Collider[] m_overlapBuffer = new Collider[32];
+
+        // Drag-contact dedupe/cooldown: separate from the release-swing
+        // dedupe (m_hitThisSwing) so the release strike can still hit an
+        // NPC the drag already struck. Reused containers, cleared on press.
+        private readonly HashSet<Rigidbody> m_hitThisDrag = new();
+        private readonly Dictionary<Rigidbody, float> m_dragRehitAt = new();
 
         private void Awake()
         {
@@ -337,6 +363,17 @@ namespace WhackySlappy.Slap
                 }
             }
 
+            // Drag-contact strike: while LMB is held (aim preview) and the
+            // hand sweeps through an NPC, make contact. Same gates as the
+            // swing: no drag hits while a swing is Active or inside its
+            // post-swing cooldown.
+            if (m_aiming && m_phase == SwingPhase.Idle
+                && dist > 0.0001f
+                && Time.time - m_swingStartTime >= m_cooldown)
+            {
+                TryDragContactHit(cur, delta, dist);
+            }
+
             // Plan B4: draw impulse vector for one second after each hit.
             if (m_debugLog
                 && m_lastHitImpulse.sqrMagnitude > 0.0001f
@@ -346,6 +383,102 @@ namespace WhackySlappy.Slap
             }
 
             m_prevWorldPos = cur;
+        }
+
+        /// <summary>
+        /// Drag-contact strike: sphere-casts the hand's motion since the
+        /// last physics tick while aiming and runs the same hit pipeline
+        /// as a release strike, scaled by hand speed instead of the swing
+        /// force multiplier.
+        /// </summary>
+        private void TryDragContactHit(Vector3 cur, Vector3 delta, float dist)
+        {
+            var handVelocity = delta / Time.fixedDeltaTime;
+            float handSpeed = handVelocity.magnitude;
+            if (handSpeed < m_dragMinHitSpeed)
+                return;
+
+            float now = Time.time;
+            var sweepDir = delta / dist;
+            float dragRadius = m_sweepRadius * m_dragHitRadiusScale;
+
+            // Same two-query sweep as the swing path (buffers are safe to
+            // reuse: this runs only when the swing block did not).
+            m_hitPoints.Clear();
+            int castCount = Physics.SphereCastNonAlloc(
+                m_prevWorldPos, dragRadius, sweepDir, m_sphereCastBuffer,
+                dist, GameLayers.MaskNPC, QueryTriggerInteraction.Ignore);
+            for (int i = 0; i < castCount; i++)
+            {
+                var h = m_sphereCastBuffer[i];
+                if (h.collider != null && h.point.sqrMagnitude > 0.0001f)
+                    m_hitPoints[h.collider] = h.point;
+            }
+            int overlapCount = Physics.OverlapSphereNonAlloc(
+                cur, dragRadius, m_overlapBuffer, GameLayers.MaskNPC);
+            for (int i = 0; i < overlapCount; i++)
+            {
+                var col = m_overlapBuffer[i];
+                if (col != null && !m_hitPoints.ContainsKey(col))
+                    m_hitPoints[col] = cur;
+            }
+
+            foreach (var kvp in m_hitPoints)
+            {
+                var rb = kvp.Key.attachedRigidbody;
+                if (rb == null)
+                    continue;
+
+                // One strike per NPC per hold, plus a short re-hit gate so
+                // a hand parked against an NPC but wiggling still works.
+                if (m_hitThisDrag.Contains(rb))
+                    continue;
+                if (m_dragRehitAt.TryGetValue(rb, out float nextAllowed)
+                    && now < nextAllowed)
+                    continue;
+                m_hitThisDrag.Add(rb);
+                m_dragRehitAt[rb] = now + m_dragRehitCooldown;
+
+                float rawMagnitude =
+                    handSpeed * m_dragImpulsePerSpeed * SillyPhysics.ImpulseMultiplier;
+                float strength = Mathf.Clamp01(
+                    (rawMagnitude - m_minImpulse) / (m_maxImpulse - m_minImpulse));
+                strength = Mathf.Max(strength, 0.25f);
+
+                Vector3 dir =
+                    handVelocity.normalized
+                    + m_forwardBias * transform.forward
+                    + m_upBias * transform.up;
+                if (m_directional)
+                    dir += m_directionalBias *
+                        (transform.right * m_dirAimNorm.x + transform.up * m_dirAimNorm.y);
+                dir = dir.normalized;
+
+                float impulseMag = Mathf.Clamp(
+                    handSpeed * m_dragImpulsePerSpeed, m_minImpulse, m_maxImpulse)
+                    * SillyPhysics.ImpulseMultiplier;
+                Vector3 dragImpulse = dir * impulseMag;
+
+                if (m_debugLog)
+                    Debug.Log(
+                        $"DragHit: handSpeed={handSpeed:F1} m/s, impulseMag={impulseMag:F1}, "
+                        + $"strength={strength:F2}");
+
+                rb.AddForceAtPosition(dragImpulse, kvp.Value, ForceMode.Impulse);
+                var slappable = rb.GetComponent<ISlappable>();
+                if (slappable != null)
+                {
+                    var hit = new SlapHitInfo(kvp.Value, dragImpulse, SlapKind.Slap, strength);
+                    slappable.OnHit(in hit);
+                }
+
+                m_lastHitPoint = kvp.Value;
+                m_lastHitImpulse = dragImpulse;
+                m_lastHitTime = now;
+
+                SlapAudio.Play(kvp.Value, strength);
+                HitFeedback.Trigger(strength);
+            }
         }
 
         private void Update()
@@ -360,6 +493,12 @@ namespace WhackySlappy.Slap
                 {
                     m_aiming = true;
                     InputReader.ResetAim();
+                    // Fresh drag strike window: clear the drag dedupe and
+                    // re-hit cooldown, and re-capture the hand position so
+                    // the first drag tick has no phantom delta.
+                    m_hitThisDrag.Clear();
+                    m_dragRehitAt.Clear();
+                    m_prevWorldPos = transform.position;
                     if (Player != null)
                         Player.LookSuppressed = true;
                 }
@@ -367,6 +506,9 @@ namespace WhackySlappy.Slap
                 if (m_aiming && InputReader.SlapReleased)
                 {
                     m_aiming = false;
+                    // Aiming ended: re-capture the hand position so no
+                    // stale drag delta leaks into the next physics tick.
+                    m_prevWorldPos = transform.position;
                     if (Player != null)
                         Player.LookSuppressed = false;
 
@@ -532,6 +674,9 @@ namespace WhackySlappy.Slap
             m_phase = SwingPhase.Active;
             m_directional = false;
             m_hitThisSwing.Clear();
+            // Release strike starts: drop the drag dedupe so an NPC the
+            // drag already struck can still be hit by this swing.
+            m_hitThisDrag.Clear();
         }
 
         /// <summary>
@@ -620,6 +765,9 @@ namespace WhackySlappy.Slap
         {
             // Never leave the camera stuck with look suppressed.
             m_aiming = false;
+            // Aiming ended: re-capture the hand position for the same
+            // no-phantom-delta reason as the release branch.
+            m_prevWorldPos = transform.position;
             if (Player != null)
                 Player.LookSuppressed = false;
             if (m_phase == SwingPhase.Idle)
