@@ -27,6 +27,7 @@ namespace WhackySlappy.Core
             RunStep("CreatePlayerBlockerWalls", () => CreatePlayerBlockerWalls(arenaRoot));
             RunStep("EnsureDirectionalLight", EnsureDirectionalLight);
             RunStep("CreatePlayer", () => CreatePlayer(arenaRoot));
+            RunStep("BuildEnvironment", () => EnvironmentBuilder.Build(arenaRoot));
             RunStep("EnsureCrosshairOnRoot", () => EnsureCrosshairOnRoot(arenaRoot));
             LogDiagnostics();
         }
