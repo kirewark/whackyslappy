@@ -133,6 +133,20 @@ namespace WhackySlappy.NPC
         // Start from the body capsule; sweep impulses push exactly there.
         private float m_feetHalfHeight = 0.8f;
 
+        // The NPC's own torso capsule, built by Create(). Once
+        // NpcBodyBuilder.AddLimbs runs, every capsule collider under the
+        // root belongs to a limb rigidbody EXCEPT the torso, whose collider
+        // attaches to the root rigidbody — so GetComponentInChildren<
+        // CapsuleCollider>() is no longer safe and every read goes through
+        // this cached reference (see SetTorso / EnsureTorsoCollider).
+        private CapsuleCollider m_torsoCollider;
+
+        // Reactive face built by Create() through NpcFace.Build(); may be
+        // null (e.g. hand-placed prefab NPCs). NpcFace is a MonoBehaviour,
+        // so never use ?. / ?? on it (UnityEngine.Object semantics): use
+        // explicit != null checks instead.
+        [System.NonSerialized] private NpcFace m_face;
+
         // Silly physics: post-launch hang-time countdown in physics seconds;
         // while > 0, part of this NPC's gravity is cancelled in FixedUpdate.
         private float m_hangTimer = 0f;
@@ -204,7 +218,8 @@ namespace WhackySlappy.NPC
         private void ApplyLowCenterOfMass()
         {
             float localY = m_centerOfMassOffset;
-            var capsule = GetComponentInChildren<CapsuleCollider>();
+            EnsureTorsoCollider();
+            var capsule = m_torsoCollider;
             if (capsule != null)
             {
                 // CapsuleCollider.height is unscaled; world half-height is
@@ -217,14 +232,57 @@ namespace WhackySlappy.NPC
             m_rb.centerOfMass = new Vector3(0f, localY, 0f);
         }
 
+        /// <summary>
+        /// Assigns the torso capsule collider built by Create(). Called from
+        /// Create() right after the controller exists, so every physics read
+        /// (center of mass, feet height, bounce material) targets the torso
+        /// even though the ragdoll-style limbs also carry CapsuleColliders.
+        /// </summary>
+        internal void SetTorso(CapsuleCollider torso)
+        {
+            m_torsoCollider = torso;
+        }
+
+        /// <summary>
+        /// Assigns the face built by Create() via NpcFace.Build().
+        /// </summary>
+        internal void SetFace(NpcFace face)
+        {
+            m_face = face;
+        }
+
+        /// <summary>
+        /// Fallback for m_torsoCollider when the NPC was not built by
+        /// Create(): the torso is the ONLY body collider whose attached
+        /// rigidbody is the NPC root (each limb capsule has its own
+        /// rigidbody), so the root-rigidbody match identifies it
+        /// unambiguously. Idempotent.
+        /// </summary>
+        private void EnsureTorsoCollider()
+        {
+            if (m_torsoCollider != null)
+                return;
+            CapsuleCollider[] caps = GetComponentsInChildren<CapsuleCollider>();
+            for (int i = 0; i < caps.Length; i++)
+            {
+                if (caps[i] != null && caps[i].attachedRigidbody == m_rb)
+                {
+                    m_torsoCollider = caps[i];
+                    break;
+                }
+            }
+        }
+
         private void Start()
         {
             // Grab the spawner reference (created once per scene by NpcBootstrap).
             m_spawner = Object.FindAnyObjectByType<NpcSpawner>();
 
             // Cache the feet offset for sweep impulses: same world
-            // half-height formula as ApplyLowCenterOfMass.
-            var bodyCapsule = GetComponentInChildren<CapsuleCollider>();
+            // half-height formula as ApplyLowCenterOfMass. The cached torso
+            // collider (NOT GetComponentInChildren) keeps limb capsules out.
+            EnsureTorsoCollider();
+            var bodyCapsule = m_torsoCollider;
             if (bodyCapsule != null)
                 m_feetHalfHeight = bodyCapsule.height * bodyCapsule.transform.lossyScale.y * 0.5f;
 
@@ -441,6 +499,11 @@ namespace WhackySlappy.NPC
                 {
                     ApplyLaunchReaction(hit.Impulse, hit.Strength);
                     NpcVoice.Yelp(transform.position, hit.Strength);
+                    // Facial reaction only for accepted hits; cooldown-gated
+                    // slaps stay expression-free. m_face is a MonoBehaviour:
+                    // explicit null check, never ?..
+                    if (m_face != null)
+                        m_face.SetExpression(NpcFace.Expression.Hit, 0.8f);
                 }
             }
         }
@@ -453,6 +516,11 @@ namespace WhackySlappy.NPC
         /// </summary>
         private void OnSwept(in SlapHitInfo hit)
         {
+            // Reached only after both cooldown gates passed in OnHit, so a
+            // Dizzy face here always accompanies an accepted sweep.
+            if (m_face != null)
+                m_face.SetExpression(NpcFace.Expression.Dizzy, 3f);
+
             Vector3 impulse = hit.Impulse;
 
             // Horizontal part of the impulse is the sweep tangent.
@@ -712,6 +780,9 @@ namespace WhackySlappy.NPC
                 {
                     m_state = State.GettingUp;
                     m_settleTimer = 0f;
+                    // The recovery animation plays with a strained face.
+                    if (m_face != null)
+                        m_face.SetExpression(NpcFace.Expression.Recover, 1.5f);
                 }
             }
             else
@@ -835,13 +906,41 @@ namespace WhackySlappy.NPC
             rb.angularDamping = 0.5f;
             rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
 
+            // Ragdoll-style arms and legs (8 jointed capsules, each with its
+            // own Rigidbody + CapsuleCollider, children of the root). Must
+            // run after the root Rigidbody exists (the joints connect to it)
+            // and before the feet snap below. Limbs get a slightly lighter
+            // tint of the body colour: Create already tints, so a matched
+            // variant instead of the exact body material.
+            var limbMat = new Material(bodyMat);
+            Color limbColor = bodyMat.color;
+            limbMat.color = new Color(
+                Mathf.Clamp01(limbColor.r * 1.15f + 0.05f),
+                Mathf.Clamp01(limbColor.g * 1.15f + 0.05f),
+                Mathf.Clamp01(limbColor.b * 1.15f + 0.05f),
+                limbColor.a);
+            NpcBodyBuilder.AddLimbs(go, limbMat, body.transform);
+
+            // Reactive cartoon face parented to the head, tinted to match
+            // the head. Built after the limbs so the face's primitive
+            // colliders (destroyed inside Build) never enter the limb
+            // collision-ignore matrix; it stays collider-free afterwards.
+            NpcFace face = NpcFace.Build(go.transform, head.transform, headMat);
+
             // Plan A4: snap feet to y=0 on spawn using the scaled collider
             // half-height (capsule.bounds.extents.y), not unscaled height/2.
+            // Read from the TORSO collider directly (body.GetComponent), so
+            // the freshly added limb capsules cannot change the snap value.
             var capsule = body.GetComponent<CapsuleCollider>();
             go.transform.position = new Vector3(position.x, capsule.bounds.extents.y, position.z);
 
             var controller = go.AddComponent<NpcController>();
             controller.m_spawner = spawner;
+            // Cache the two physics-critical/behaviour references before any
+            // controller code can run (Awake already fired ApplyLowCenter-
+            // OfMass during AddComponent, and Create repeats it below).
+            controller.SetTorso(capsule);
+            controller.SetFace(face);
 
             // Plan A1: set center of mass after controller is created.
             controller.ApplyLowCenterOfMass();

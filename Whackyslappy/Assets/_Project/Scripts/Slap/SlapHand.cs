@@ -296,6 +296,7 @@ namespace WhackySlappy.Slap
                 foreach (var kvp in m_hitPoints)
                 {
                     var rb = kvp.Key.attachedRigidbody;
+                    rb = ResolveNpcRoot(kvp.Key, rb);
                     if (rb == null || !m_hitThisSwing.Add(rb))
                         continue;
 
@@ -428,6 +429,7 @@ namespace WhackySlappy.Slap
                 var rb = kvp.Key.attachedRigidbody;
                 if (rb == null)
                     continue;
+                rb = ResolveNpcRoot(kvp.Key, rb);
 
                 // One strike per NPC per hold, plus a short re-hit gate so
                 // a hand parked against an NPC but wiggling still works.
@@ -773,6 +775,18 @@ namespace WhackySlappy.Slap
             if (m_phase == SwingPhase.Idle)
                 transform.localPosition = m_restPosition;
             transform.localRotation = Quaternion.identity;
+        }
+
+        private static Rigidbody ResolveNpcRoot(Collider col, Rigidbody rb)
+        {
+            var slappable = col.GetComponentInParent<ISlappable>();
+            var comp = slappable as Component;
+            if (comp != null)
+            {
+                var rootRb = comp.GetComponent<Rigidbody>();
+                if (rootRb != null) return rootRb;
+            }
+            return rb;
         }
 
         private void OnDrawGizmos()

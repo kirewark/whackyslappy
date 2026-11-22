@@ -174,6 +174,7 @@ namespace WhackySlappy.Slap
         private void ProcessHit(Collider col, Vector3 point, Vector3 fallbackDir)
         {
             Rigidbody rb = col.attachedRigidbody;
+            rb = ResolveNpcRoot(col, rb);
             if (rb == null)
                 return;
             if (!m_hitThisSweep.Add(rb))
@@ -237,6 +238,18 @@ namespace WhackySlappy.Slap
             leg.transform.localScale = new Vector3(0.3f, 0.08f, 1.0f);
             leg.layer = GameLayers.PlayerHand;
             m_legVisual = leg;
+        }
+
+        private static Rigidbody ResolveNpcRoot(Collider col, Rigidbody rb)
+        {
+            var slappable = col.GetComponentInParent<ISlappable>();
+            var comp = slappable as Component;
+            if (comp != null)
+            {
+                var rootRb = comp.GetComponent<Rigidbody>();
+                if (rootRb != null) return rootRb;
+            }
+            return rb;
         }
 
         private void DrawLastHit()
