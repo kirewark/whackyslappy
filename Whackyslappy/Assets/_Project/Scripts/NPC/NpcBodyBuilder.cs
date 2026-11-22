@@ -34,7 +34,9 @@ namespace WhackySlappy.NPC
         // Joint anchor at the top of a capsule primitive. A capsule
         // primitive is 2 units tall in its own local space (before scaling),
         // so y = 1 is its top; Unity scales the anchor with the transform,
-        // landing the joint at the limb's upper end.
+        // landing the joint at the limb's upper end. CharacterJoint.axis is
+        // the twist axis (set to down, along the hanging limb); swingAxis
+        // is the primary swing axis (set to right, bending forward/back).
         private static readonly Vector3 TopAnchor = new Vector3(0f, 1f, 0f);
 
         /// <summary>
@@ -70,7 +72,7 @@ namespace WhackySlappy.NPC
             Rigidbody leftForearm = BuildLimb(npcRoot, material, "Arm_L_Lower",
                 new Vector3(-ShoulderX, ShoulderY - ArmLength - ArmLength * 0.5f + Overlap, 0f),
                 ArmRadius, ArmLength, ArmMass);
-            AddJoint(leftForearm.gameObject, leftUpperArm, TopAnchor, 60f, 0f, -10f, 10f);
+            AddJoint(leftForearm.gameObject, leftUpperArm, TopAnchor, 60f, 40f, -10f, 10f);
 
             Rigidbody rightUpperArm = BuildLimb(npcRoot, material, "Arm_R_Upper",
                 new Vector3(ShoulderX, ShoulderY - ArmLength * 0.5f, 0f),
@@ -80,7 +82,7 @@ namespace WhackySlappy.NPC
             Rigidbody rightForearm = BuildLimb(npcRoot, material, "Arm_R_Lower",
                 new Vector3(ShoulderX, ShoulderY - ArmLength - ArmLength * 0.5f + Overlap, 0f),
                 ArmRadius, ArmLength, ArmMass);
-            AddJoint(rightForearm.gameObject, rightUpperArm, TopAnchor, 60f, 0f, -10f, 10f);
+            AddJoint(rightForearm.gameObject, rightUpperArm, TopAnchor, 60f, 40f, -10f, 10f);
 
             Rigidbody leftThigh = BuildLimb(npcRoot, material, "Leg_L_Upper",
                 new Vector3(-HipX, HipY - LegLength * 0.5f, 0f),
@@ -90,7 +92,7 @@ namespace WhackySlappy.NPC
             Rigidbody leftShin = BuildLimb(npcRoot, material, "Leg_L_Lower",
                 new Vector3(-HipX, HipY - LegLength - LegLength * 0.5f + Overlap, 0f),
                 LegRadius, LegLength, LegMass);
-            AddJoint(leftShin.gameObject, leftThigh, TopAnchor, 25f, 0f, -10f, 10f);
+            AddJoint(leftShin.gameObject, leftThigh, TopAnchor, 60f, 25f, -10f, 10f);
 
             Rigidbody rightThigh = BuildLimb(npcRoot, material, "Leg_R_Upper",
                 new Vector3(HipX, HipY - LegLength * 0.5f, 0f),
@@ -100,7 +102,7 @@ namespace WhackySlappy.NPC
             Rigidbody rightShin = BuildLimb(npcRoot, material, "Leg_R_Lower",
                 new Vector3(HipX, HipY - LegLength - LegLength * 0.5f + Overlap, 0f),
                 LegRadius, LegLength, LegMass);
-            AddJoint(rightShin.gameObject, rightThigh, TopAnchor, 25f, 0f, -10f, 10f);
+            AddJoint(rightShin.gameObject, rightThigh, TopAnchor, 60f, 25f, -10f, 10f);
 
             // Ignore collisions between every pair of body colliders
             // (torso, head and all limbs) so the joints do not self-collide.
@@ -154,15 +156,20 @@ namespace WhackySlappy.NPC
 
         /// <summary>
         /// Adds a CharacterJoint on limbGo joined to connectedBody, with
-        /// degrees for the swing and twist limits.
+        /// degrees for the swing and twist limits. axis is the twist axis
+        /// (Vector3.down, along the hanging limb); swingAxis is Vector3.right
+        /// so swing1 governs the forward/back bend of knees and elbows.
         /// </summary>
         private static void AddJoint(GameObject limbGo, Rigidbody connectedBody,
             Vector3 anchor, float swing1, float swing2, float twistLow, float twistHigh)
         {
             CharacterJoint joint = limbGo.AddComponent<CharacterJoint>();
             joint.connectedBody = connectedBody;
-            joint.axis = Vector3.right;
+            joint.axis = Vector3.down;          // twist axis runs along the hanging limb
+            joint.swingAxis = Vector3.right;    // primary swing axis: bend forward/back
             joint.anchor = anchor;
+            joint.enablePreprocessing = false;
+            joint.enableProjection = true;
 
             // SoftJointLimit is a struct: copy, change, assign back.
             SoftJointLimit swing1Limit = joint.swing1Limit;
