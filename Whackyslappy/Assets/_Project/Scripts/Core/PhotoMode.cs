@@ -90,7 +90,10 @@ namespace WhackySlappy.Core
         /// </summary>
         private class Runner : MonoBehaviour
         {
-            private string m_shot = "";
+            // Assigned by the outer PhotoMode class in Init; the WebGL build
+            // rejects cross-class writes to a nested-class private field
+            // (CS0122), so this field is internal. Same-assembly access.
+            internal string m_shot = "";
 
             // Stable ids per NPC instance across the 3.5 s of state lines.
             private readonly Dictionary<NpcController, int> m_npcIds = new Dictionary<NpcController, int>();
