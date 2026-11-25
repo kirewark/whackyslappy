@@ -12,10 +12,10 @@ namespace WhackySlappy.NPC
     public class NpcSpawner : MonoBehaviour
     {
         /// <summary>Hard cap: the spawner never exceeds this alive count.</summary>
-        [SerializeField] private int m_maxAlive = 12;
+        [SerializeField] private int m_maxAlive = 4;
 
         /// <summary> NPCs spawned at Start (clamped to m_maxAlive).</summary>
-        [SerializeField] private int m_initialBurst = 6;
+        [SerializeField] private int m_initialBurst = 4;
 
         /// <summary>Seconds between replacement spawn ticks; one spawn max per tick.</summary>
         [SerializeField] private float m_spawnInterval = 3f;
