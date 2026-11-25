@@ -34,7 +34,7 @@ namespace WhackySlappy.NPC
         [SerializeField] private float m_settleSpeed = 0.3f;
 
         /// <summary>Time (s) the NPC must stay below settleSpeed before GettingUp.</summary>
-        [SerializeField] private float m_settleTime = 1.0f;
+        [SerializeField] private float m_settleTime = 0.4f;
 
         /// <summary>Cooldown (s) after a hit during which the NPC ignores new hits.</summary>
         [SerializeField] private float m_hitCooldown = 0.1f;

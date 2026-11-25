@@ -258,6 +258,11 @@ namespace WhackySlappy.Slap
 
             m_prevWorldPos = transform.position;
             m_hitThisSwing = new HashSet<Rigidbody>();
+
+            // The default 0 would block the first swing for m_cooldown
+            // seconds after boot (Time.time - 0 < m_cooldown early on),
+            // so pretend the last swing ended long ago.
+            m_swingStartTime = -m_cooldown;
         }
 
         private void FixedUpdate()
