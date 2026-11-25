@@ -1,0 +1,6 @@
+{
+  "name": "WhackySlappy",
+  "rootNamespace": "WhackySlappy",
+  "references": ["Unity.InputSystem"],
+  "autoReferenced": true
+}
