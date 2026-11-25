@@ -1,4 +1,5 @@
 using UnityEngine;
+using WhackySlappy.Core;
 
 namespace WhackySlappy.NPC
 {
@@ -141,13 +142,17 @@ namespace WhackySlappy.NPC
             if (col != null)
                 Destroy(col);
 
-            // Copy the runtime material the repo already uses, then tint it.
+            // Clone the head material the caller passes (or a DefaultLitMaterial
+            // Standard-shader base when it passes none), then tint it.
             var renderer = part.GetComponent<Renderer>();
             var mat = baseMaterial != null
                 ? new Material(baseMaterial)
-                : new Material(renderer.sharedMaterial);
-            mat.color = color;
-            renderer.material = mat;
+                : DefaultLitMaterial.Create();
+            if (mat != null)
+            {
+                mat.color = color;
+                renderer.material = mat;
+            }
 
             return part;
         }

@@ -25,6 +25,7 @@
 // and 0.10 m of sleeve backward. No cuff disc, no flat end cap facing +Z.
 using UnityEngine;
 using UnityEngine.Rendering;
+using WhackySlappy.Core;
 
 namespace WhackySlappy.Slap
 {
@@ -53,11 +54,8 @@ namespace WhackySlappy.Slap
         /// position zero, identity rotation, scale one) holding the cartoon
         /// mitten and returns its Transform. If <paramref name="material"/>
         /// is null, every part shares a lazily created white-glove material
-        /// (the sleeve uses a light-grey one). Prefer passing the existing
-        /// hand renderer's material: Shader.Find can return null in stripped
-        /// WebGL builds, so keep the fallback shaders in Project Settings >
-        /// Graphics > Always Included Shaders, or replace this fallback with
-        /// a material asset later.
+        /// (the sleeve uses a light-grey one), based on
+        /// DefaultLitMaterial.Create() so it survives WebGL stripping.
         /// </summary>
         public static Transform Build(Transform parent, Material material = null)
         {
@@ -189,16 +187,14 @@ namespace WhackySlappy.Slap
         }
 
         /// <summary>Returns the lazily created shared white-glove material
-        /// (cartoon white, matte), or null if no fallback shader survived
-        /// the build.</summary>
+        /// (cartoon white, matte), or null if no DefaultLit base material
+        /// is available.</summary>
         private static Material GetSharedMaterial()
         {
             if (s_sharedMaterial != null) return s_sharedMaterial;
 
-            var shader = FindFallbackShader();
-            if (shader == null) return null;
-
-            s_sharedMaterial = new Material(shader);
+            s_sharedMaterial = DefaultLitMaterial.Create();
+            if (s_sharedMaterial == null) return null;
             s_sharedMaterial.color = s_gloveColor;
             // URP Lit reads _BaseColor; other shaders ignore it harmlessly.
             s_sharedMaterial.SetColor("_BaseColor", s_gloveColor);
@@ -207,16 +203,14 @@ namespace WhackySlappy.Slap
         }
 
         /// <summary>Returns the lazily created shared wrist-sleeve material
-        /// (light grey, matte), or null if no fallback shader survived the
-        /// build.</summary>
+        /// (light grey, matte), or null if no DefaultLit base material is
+        /// available.</summary>
         private static Material GetSharedSleeveMaterial()
         {
             if (s_sleeveMaterial != null) return s_sleeveMaterial;
 
-            var shader = FindFallbackShader();
-            if (shader == null) return null;
-
-            s_sleeveMaterial = new Material(shader);
+            s_sleeveMaterial = DefaultLitMaterial.Create();
+            if (s_sleeveMaterial == null) return null;
             s_sleeveMaterial.color = s_sleeveColor;
             s_sleeveMaterial.SetColor("_BaseColor", s_sleeveColor);
             ApplyMatte(s_sleeveMaterial);
@@ -229,22 +223,6 @@ namespace WhackySlappy.Slap
             if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", 0f);
             if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.25f);
             if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", 0.25f);
-        }
-
-        /// <summary>Shader.Find can return null in WebGL builds when shaders
-        /// are stripped: add these to Always Included Shaders, or pass a real
-        /// material asset into Build() and this path never runs.</summary>
-        private static Shader FindFallbackShader()
-        {
-            var shader = Shader.Find("Universal Render Pipeline/Lit");
-            if (shader == null) shader = Shader.Find("Standard");
-            if (shader == null) shader = Shader.Find("Sprites/Default");
-            if (shader == null)
-            {
-                Debug.LogWarning("[HandModelBuilder] No fallback shader found; "
-                    + "hand parts keep their default material.");
-            }
-            return shader;
         }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]

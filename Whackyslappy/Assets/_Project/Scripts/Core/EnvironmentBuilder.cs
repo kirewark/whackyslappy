@@ -170,10 +170,14 @@ namespace WhackySlappy.Core
             if (groundCollider != null)
                 Object.DestroyImmediate(groundCollider);
 
-            // Copy the primitive's default material (repo pattern; no Shader.Find).
-            var mat = new Material(ground.GetComponent<MeshRenderer>().sharedMaterial);
-            mat.color = GroundColor;
-            ground.GetComponent<MeshRenderer>().material = mat;
+            // Standard-shader base from DefaultLitMaterial (repo pattern: no
+            // Shader.Find, no copy of the primitive's stripped built-in).
+            var mat = DefaultLitMaterial.Create();
+            if (mat != null)
+            {
+                mat.color = GroundColor;
+                ground.GetComponent<MeshRenderer>().material = mat;
+            }
         }
     }
 }

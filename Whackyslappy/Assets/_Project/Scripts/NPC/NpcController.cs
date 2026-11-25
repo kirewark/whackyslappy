@@ -885,9 +885,12 @@ namespace WhackySlappy.NPC
             body.transform.SetParent(go.transform, false);
             body.transform.localScale = new Vector3(0.7f, 0.8f, 0.7f);
             body.layer = GameLayers.NPC;
-            var bodyMat = new Material(body.GetComponent<Renderer>().sharedMaterial);
-            bodyMat.color = new Color(Random.Range(0.3f, 1f), Random.Range(0.3f, 1f), Random.Range(0.3f, 1f));
-            body.GetComponent<Renderer>().material = bodyMat;
+            var bodyMat = DefaultLitMaterial.Create();
+            if (bodyMat != null)
+            {
+                bodyMat.color = new Color(Random.Range(0.3f, 1f), Random.Range(0.3f, 1f), Random.Range(0.3f, 1f));
+                body.GetComponent<Renderer>().material = bodyMat;
+            }
 
             // Sphere head child.
             var head = GameObject.CreatePrimitive(PrimitiveType.Sphere);
@@ -895,9 +898,12 @@ namespace WhackySlappy.NPC
             head.transform.localPosition = new Vector3(0, 1f, 0);
             head.transform.localScale = new Vector3(0.6f, 0.6f, 0.6f);
             head.layer = GameLayers.NPC;
-            var headMat = new Material(head.GetComponent<Renderer>().sharedMaterial);
-            headMat.color = new Color(Random.Range(0.3f, 1f), Random.Range(0.3f, 1f), Random.Range(0.3f, 1f));
-            head.GetComponent<Renderer>().material = headMat;
+            var headMat = DefaultLitMaterial.Create();
+            if (headMat != null)
+            {
+                headMat.color = new Color(Random.Range(0.3f, 1f), Random.Range(0.3f, 1f), Random.Range(0.3f, 1f));
+                head.GetComponent<Renderer>().material = headMat;
+            }
 
             // One non-kinematic Rigidbody on root.
             var rb = go.AddComponent<Rigidbody>();
@@ -912,13 +918,17 @@ namespace WhackySlappy.NPC
             // and before the feet snap below. Limbs get a slightly lighter
             // tint of the body colour: Create already tints, so a matched
             // variant instead of the exact body material.
-            var limbMat = new Material(bodyMat);
-            Color limbColor = bodyMat.color;
-            limbMat.color = new Color(
-                Mathf.Clamp01(limbColor.r * 1.15f + 0.05f),
-                Mathf.Clamp01(limbColor.g * 1.15f + 0.05f),
-                Mathf.Clamp01(limbColor.b * 1.15f + 0.05f),
-                limbColor.a);
+            Material limbMat = null;
+            if (bodyMat != null)
+            {
+                limbMat = new Material(bodyMat);
+                Color limbColor = bodyMat.color;
+                limbMat.color = new Color(
+                    Mathf.Clamp01(limbColor.r * 1.15f + 0.05f),
+                    Mathf.Clamp01(limbColor.g * 1.15f + 0.05f),
+                    Mathf.Clamp01(limbColor.b * 1.15f + 0.05f),
+                    limbColor.a);
+            }
             NpcBodyBuilder.AddLimbs(go, limbMat, body.transform);
 
             // Reactive cartoon face parented to the head, tinted to match

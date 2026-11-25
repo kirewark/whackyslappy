@@ -140,6 +140,12 @@ namespace WhackySlappy.NPC
             limb.layer = GameLayers.NPC;
 
             Renderer renderer = limb.GetComponent<Renderer>();
+            if (material == null)
+            {
+                // No caller material: use a Standard-shader base instead of
+                // the primitive's built-in (stripped from WebGL, magenta).
+                material = DefaultLitMaterial.Create();
+            }
             if (material != null && renderer != null)
             {
                 renderer.sharedMaterial = material;
