@@ -54,7 +54,7 @@ namespace WhackySlappy.Tests.PlayMode
             Assert.IsNotNull(reader, "Player is missing its PlayerInputReader.");
             Assert.IsTrue(reader.enabled,
                 "PlayerInputReader must stay enabled in normal play (no ?shot= parameter).");
-            Assert.IsTrue(reader.enabledInHierarchy,
+            Assert.IsTrue(reader.isActiveAndEnabled,
                 "PlayerInputReader must stay active in the hierarchy in normal play.");
 
             var controller = player.GetComponent<FirstPersonController>();
