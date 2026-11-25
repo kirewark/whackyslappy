@@ -1,0 +1,6 @@
+{
+  "name": "WhackySlappy.Editor",
+  "rootNamespace": "WhackySlappy.Editor",
+  "references": ["WhackySlappy"],
+  "includePlatforms": ["Editor"]
+}
