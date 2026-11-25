@@ -66,6 +66,15 @@ namespace WhackySlappy.Tests.PlayMode
             Assert.IsNotNull(loadOp, "Scene " + TestScene + " is not in the build settings.");
             while (!loadOp.isDone)
                 yield return null;
+            yield return null;
+
+            // The real player build runs these via RuntimeInitializeOnLoadMethod,
+            // but that hook fires once per play session, not on the test's scene
+            // load, so tests must call the bootstraps themselves. Both calls are
+            // idempotent: BuildArena returns early if ArenaRoot exists and Init
+            // creates the NpcSpawner only when none exists.
+            WhackySlappy.Core.GameBootstrap.BuildArena();
+            WhackySlappy.NPC.NpcBootstrap.Init();
         }
     }
 }
