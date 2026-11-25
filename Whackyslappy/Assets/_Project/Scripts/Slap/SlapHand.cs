@@ -667,6 +667,24 @@ namespace WhackySlappy.Slap
             }
         }
 
+        /// <summary>
+        /// Public entry point for headless photo mode (and any scripted
+        /// swing): runs the exact plain-swing start an Attack release with
+        /// no drag performs, guarded by the same idle + cooldown checks
+        /// Update uses. Adds no behavior of its own - the windup/strike/
+        /// recover animation, the hit scan and the slap audio all follow
+        /// through StartSwing/FixedUpdate exactly like a real click.
+        /// </summary>
+        public void TriggerPlainSwing()
+        {
+            if (m_phase != SwingPhase.Idle)
+                return;
+            if (Time.time - m_swingStartTime < m_cooldown)
+                return;
+
+            StartSwing();
+        }
+
         private void StartSwing()
         {
             m_swingStartTime = Time.time;
