@@ -78,13 +78,17 @@ namespace WhackySlappy.Core
             tex.SetPixel(1, 1, new Color(0.8f, 0.8f, 0.8f));
             tex.Apply();
 
-            // Copy the primitive's default material. Shader.Find can return null
-            // when a shader is not included in the build, so do not use it here.
+            // Standard-shader base from DefaultLitMaterial: the primitive's
+            // built-in material is stripped from WebGL builds (renders magenta)
+            // and Shader.Find can return null, so do not use either here.
             var renderer = floorObj.GetComponent<MeshRenderer>();
-            var mat = new Material(renderer.sharedMaterial);
-            mat.mainTexture = tex;
-            mat.mainTextureScale = new Vector2(10f, 10f);
-            renderer.material = mat;
+            var mat = DefaultLitMaterial.Create();
+            if (mat != null)
+            {
+                mat.mainTexture = tex;
+                mat.mainTextureScale = new Vector2(10f, 10f);
+                renderer.material = mat;
+            }
 
             // Orange edge strips (visual only) so the platform edge is easy to see.
             var half = FloorSize * 0.5f;
@@ -100,9 +104,14 @@ namespace WhackySlappy.Core
                 edge.transform.SetParent(parent.transform, false);
                 edge.transform.position = edgePos[i];
                 edge.transform.localScale = edgeScale[i];
-                var edgeMat = new Material(renderer.sharedMaterial);
-                edgeMat.color = new Color(1f, 0.55f, 0.1f);
-                edge.GetComponent<MeshRenderer>().material = edgeMat;
+                // Copy the floor's Standard-shader material (checker texture
+                // included, exactly as before) and tint it orange.
+                if (mat != null)
+                {
+                    var edgeMat = new Material(mat);
+                    edgeMat.color = new Color(1f, 0.55f, 0.1f);
+                    edge.GetComponent<MeshRenderer>().material = edgeMat;
+                }
             }
         }
 

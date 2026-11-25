@@ -230,9 +230,12 @@ namespace WhackySlappy.Slap
             leg.name = "LegSweepVisual";
             Object.Destroy(leg.GetComponent<Collider>());
 
-            var mat = new Material(leg.GetComponent<Renderer>().sharedMaterial);
-            mat.color = new Color(0.55f, 0.35f, 0.2f);
-            leg.GetComponent<Renderer>().material = mat;
+            var mat = DefaultLitMaterial.Create();
+            if (mat != null)
+            {
+                mat.color = new Color(0.55f, 0.35f, 0.2f);
+                leg.GetComponent<Renderer>().material = mat;
+            }
 
             leg.transform.SetParent(transform, false);
             leg.transform.localScale = new Vector3(0.3f, 0.08f, 1.0f);
