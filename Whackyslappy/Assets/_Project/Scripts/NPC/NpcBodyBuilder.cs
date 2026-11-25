@@ -16,16 +16,22 @@ namespace WhackySlappy.NPC
         private const float ArmLength = 0.45f;
         private const float ArmMass = 0.15f;
 
-        // Leg proportions (metres).
-        private const float LegRadius = 0.12f;
+        // Leg proportions (metres). Slightly thicker so the legs read
+        // clearly next to the wide short torso.
+        private const float LegRadius = 0.13f;
         private const float LegLength = 0.5f;
         private const float LegMass = 0.25f;
 
-        // Attachment points, relative to the npcRoot transform: root origin
-        // is torso centre; feet at -0.8.
+        // Attachment points, relative to the npcRoot transform: the root
+        // origin sits at hip level; the torso spans y = 0..0.9 with radius
+        // 0.35 (NpcController.Create); feet at -0.8. Hips at x = 0.25 tuck
+        // the upper legs into the rounded torso bottom (cross-section
+        // radius about 0.245 at y = 0.1, so no gap) while their outer edge
+        // at 0.38 sits outside the torso silhouette; below y = 0 the legs
+        // are fully exposed.
         private const float ShoulderX = 0.45f;
         private const float ShoulderY = 0.45f;
-        private const float HipX = 0.2f;
+        private const float HipX = 0.25f;
         private const float HipY = 0.1f;
 
         // How far lower segments overlap upper segments so joints have no gap.
