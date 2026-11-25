@@ -51,7 +51,7 @@ jobs:
         with: { lfs: true, clean: false }  # keep Library/ between runs: the speed win
       - name: Remove old test results
         run: rm -rf artifacts
-      - uses: game-ci/unity-test-runner@v4
+      - uses: game-ci/unity-test-runner@v4.3.2   # plain v4 now runs an unpinned CLI whose license activation failed here
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
@@ -76,7 +76,7 @@ jobs:
         with: { lfs: true, clean: false, fetch-depth: 0 }   # full history for the version number
       - name: Remove old build
         run: rm -rf build
-      - uses: game-ci/unity-builder@v5.0.1   # v6 downloads an unpinned 'latest' CLI and hands it the Unity secrets
+      - uses: game-ci/unity-builder@v5.0.1   # v6 runs an unpinned "latest" CLI (see unity-test-runner above)
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
