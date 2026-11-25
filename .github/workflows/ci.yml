@@ -1,0 +1,156 @@
+name: ci
+# Every push, on every branch (main included while agents still commit there), runs:
+#   lint (GitHub-hosted) -> test -> build-webgl -> staging -> screenshot (self-hosted Proxmox runner)
+# Branch protection on main should require: lint, test, build-webgl.
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  PROJECT_PATH: Whackyslappy
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with: { fetch-depth: 0 }
+      - name: Block committed Unity junk
+        run: |
+          ! git ls-files | grep -E "^${PROJECT_PATH}/(Library|Temp|Obj|Logs|UserSettings|Build|Builds)/"
+      - name: Every asset and folder under Assets has a .meta
+        run: |
+          missing=$(
+            git ls-files "${PROJECT_PATH}/Assets" | grep -v '\.meta$' | while read -r f; do
+              [ -f "$f.meta" ] || echo "$f"; done
+            git ls-files "${PROJECT_PATH}/Assets" | while read -r f; do
+              d=$(dirname "$f"); while [ "$d" != "${PROJECT_PATH}/Assets" ] && [ "$d" != "." ]; do echo "$d"; d=$(dirname "$d"); done
+            done | sort -u | while read -r d; do [ -f "$d.meta" ] || echo "$d/"; done
+          )
+          [ -z "$missing" ] || { echo "Missing .meta for:"; echo "$missing"; exit 1; }
+      - name: Agents do not touch .github
+        if: github.ref != 'refs/heads/main' && github.actor != 'kirewark'
+        run: |
+          ! git diff --name-only origin/main...HEAD | grep -E '^\.github/'
+
+  test:
+    needs: lint
+    runs-on: [self-hosted, unity]
+    permissions:
+      contents: read
+      checks: write                        # test report as a check run
+    steps:
+      - uses: actions/checkout@v7
+        with: { lfs: true, clean: false }  # keep Library/ between runs: the speed win
+      - name: Remove old test results
+        run: rm -rf artifacts
+      - uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: ${{ env.PROJECT_PATH }}
+          testMode: all
+          runAsHostUser: 'true'            # files in the workspace stay owned by the runner user
+          githubToken: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: test-results-${{ github.sha }}
+          path: artifacts
+          retention-days: 7
+
+  build-webgl:
+    needs: test
+    runs-on: [self-hosted, unity]
+    steps:
+      - uses: actions/checkout@v7
+        with: { lfs: true, clean: false, fetch-depth: 0 }   # full history for the version number
+      - name: Remove old build
+        run: rm -rf build
+      - uses: game-ci/unity-builder@v5.0.1   # v6 downloads an unpinned 'latest' CLI and hands it the Unity secrets
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: ${{ env.PROJECT_PATH }}
+          targetPlatform: WebGL
+          buildsPath: build
+          versioning: Semantic
+          allowDirtyBuild: 'true'          # workspace is reused, so artifacts/ etc. are always untracked
+          runAsHostUser: 'true'
+      - name: Show build layout
+        run: find build -maxdepth 3 -name index.html
+      - uses: actions/upload-artifact@v7
+        with:
+          name: webgl-${{ github.sha }}
+          path: build/WebGL
+          retention-days: 14
+
+  staging:
+    needs: build-webgl
+    runs-on: [self-hosted, unity]
+    steps:
+      - name: Remove old downloads
+        run: rm -rf out dest.txt
+      - uses: actions/download-artifact@v8
+        with:
+          name: webgl-${{ github.sha }}
+          path: out
+      - name: Publish to staging LXC
+        env:
+          REF: ${{ github.ref_name }}      # branch names are agent-chosen: never paste them into a script
+        run: |
+          src=$(dirname "$(find out -maxdepth 3 -name index.html | head -1)")
+          [ -n "$src" ] && [ "$src" != "." ] || { echo "No index.html in the build artifact"; find out -maxdepth 3; exit 1; }
+          dest="whacky/$(printf '%s' "$REF" | tr -c 'A-Za-z0-9._-' '-')"
+          rsync -az --delete --chmod=D755,F644 "$src/" "deploy@staging.lan:/srv/www/$dest/"
+          echo "Play it on the LAN: http://staging.lan/$dest/" >> "$GITHUB_STEP_SUMMARY"
+          echo "$dest" > dest.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: staging-path-${{ github.sha }}
+          path: dest.txt
+          retention-days: 1
+
+  screenshot:                              # what Hermes "sees": boot check + scripted photo-mode shots
+    needs: staging
+    runs-on: [self-hosted, unity]
+    env:
+      PW_VERSION: "1.65.1"                 # container image tag and npm package must match
+      SHOTS: "overview,slap,getup"         # photo-mode scenarios (hermes-repo-tasks.md T6)
+    steps:
+      - name: Remove old shots
+        run: rm -rf shots dest.txt 2>/dev/null || docker run --rm -v "$PWD:/w" "mcr.microsoft.com/playwright:v${PW_VERSION}-noble" rm -rf /w/shots /w/dest.txt
+      - uses: actions/checkout@v7          # capture script from main, so a branch cannot change it
+        with: { ref: main, path: _gate, sparse-checkout: .github/ai-review }
+      - uses: actions/download-artifact@v8
+        with:
+          name: staging-path-${{ github.sha }}
+      - name: Capture boot and scripted shots
+        run: |
+          dest=$(cat dest.txt)
+          mkdir -p shots
+          docker run --rm --network host --ipc host \
+            -v "$PWD/_gate/.github/ai-review:/gate:ro" -v "$PWD/shots:/evidence" \
+            "mcr.microsoft.com/playwright:v${PW_VERSION}-noble" \
+            bash -c "cd /tmp && npm init -y >/dev/null && npm i --silent playwright@${PW_VERSION} && \
+                     cp /gate/smoke.mjs . && node smoke.mjs 'http://10.10.10.11/$dest/' /evidence '$SHOTS'"
+      - name: Add results to the run summary
+        if: always()
+        run: cat shots/summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "No browser results." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: screenshots-${{ github.sha }}
+          path: shots
+          retention-days: 7
