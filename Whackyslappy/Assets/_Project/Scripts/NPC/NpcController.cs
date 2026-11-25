@@ -452,6 +452,20 @@ namespace WhackySlappy.NPC
         // -------------------------------------------------------------------------
 
         /// <summary>
+        /// Read-only views of the private state machine and the cached
+        /// body for headless photo mode / diagnostics. Pure getters:
+        /// they add no behavior of their own.
+        /// </summary>
+        public bool IsTumbling => m_state == State.Tumbling;
+        public bool IsGettingUp => m_state == State.GettingUp;
+
+        /// <summary>Angle (degrees) between this NPC's up axis and world up.</summary>
+        public float TiltDegrees => Vector3.Angle(transform.up, Vector3.up);
+
+        /// <summary>Rigidbody speed (m/s); 0 before the body is cached.</summary>
+        public float Speed => m_rb != null ? m_rb.linearVelocity.magnitude : 0f;
+
+        /// <summary>
         /// Called by the slap system when this NPC is hit.
         /// Applies impulse and switches to Tumbling state.
         /// </summary>
