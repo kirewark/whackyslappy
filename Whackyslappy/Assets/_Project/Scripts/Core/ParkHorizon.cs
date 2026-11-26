@@ -18,14 +18,20 @@ namespace WhackySlappy.Core
         // Tuning values are constants because a static builder has no
         // Inspector (same style as EnvironmentBuilder / GameBootstrap).
         // Hills sit beyond the walls (arena half is GameBootstrap.
-        // FloorHalf = 20 m; every hill centre stays at least
-        // HillRadiusMin = 55 m from the origin, so even the widest
-        // hill's near edge stops at the wall line). They close the grey
-        // band between the arena and the old 70..95 m ring.
+        // FloorHalf = 20 m). A hill is an axis-aligned ellipsoid with
+        // horizontal half-footprint max(sx, sz) / 2, so before placing
+        // we push its centre out until its centre distance minus that
+        // half-footprint keeps a HillClearance = 8 m gap to the ±20 m
+        // wall square — the max-norm clearance test holds in every
+        // direction, diagonals included (an axis-aligned 70 m-wide
+        // hill at 55 m used to spill right into the arena corner).
+        // They close the grey band between the arena and the old
+        // 70..95 m ring.
         private const int Seed = 4711;
         private const int HillCount = 20;
         private const float HillRadiusMin = 55f;
         private const float HillRadiusMax = 80f;
+        private const float HillClearance = 8f;
         // Part budget for tree props; with HillCount hills the whole
         // backdrop stays at or under 60 GameObjects.
         private const int TreePartBudget = 40;
@@ -35,13 +41,20 @@ namespace WhackySlappy.Core
         // one flat grey-green slab there; squashed cylinders in two
         // alternating greens break it up. Colliders removed (the horizon
         // never blocks the player); y = 0.01 clears the plane (whose top
-        // face is at y = -0.05) so the discs never z-fight with it.
+        // face is at y = -0.05) so the discs never z-fight with it, and
+        // is far below the wall tops so the arena walls still read.
         private const int MeadowPatchCount = 24;
         private const float MeadowPatchInner = 25f;
         private const float MeadowPatchOuter = 70f;
-        // Arena walls sit at ±20 m (GameBootstrap.FloorHalf); a disc
-        // centre must stay r + this clear so the rim never crosses them.
-        private const float MeadowPatchWallClear = 21f;
+        // A disc is only placed when the WHOLE disc lies outside the
+        // ±20 m arena square plus a MeadowPatchMargin = 2 m band:
+        // max(|cx|, |cz|) >= FloorHalf + r + 2. A radial clamp cannot
+        // express that (a 12 m disc at 25 m distance and 45 deg has its
+        // centre inside the wall square to begin with), so failing
+        // samples are rejected and redrawn, bounded like
+        // ArenaProps.TryPlace.
+        private const float MeadowPatchMargin = 2f;
+        private const int MeadowPatchTries = 40;
         private const float MeadowPatchMinR = 6f;
         private const float MeadowPatchMaxR = 12f;
         private const float MeadowPatchY = 0.01f;
@@ -85,6 +98,32 @@ namespace WhackySlappy.Core
                 float sx = Mathf.Lerp(40f, 70f, (float)rng.NextDouble());
                 float sy = Mathf.Lerp(6f, 14f, (float)rng.NextDouble());
                 float sz = Mathf.Lerp(30f, 50f, (float)rng.NextDouble());
+
+                // Horizontal footprint check BEFORE placing: the
+                // ellipsoid's wider half-axis reaches HillClearance short
+                // of the centre, so push the centre out along the same
+                // ray until d - half-footprint >= FloorHalf + 8. With
+                // the current size ranges that never exceeds
+                // HillRadiusMax; the shrink branch only guards future
+                // tuning (a hill that cannot fit even at 80 m gets its
+                // horizontal scale reduced instead).
+                float halfFoot = Mathf.Max(sx, sz) * 0.5f;
+                float need = GameBootstrap.FloorHalf + HillClearance + halfFoot;
+                if (radius < need)
+                {
+                    if (need <= HillRadiusMax)
+                    {
+                        radius = need;
+                    }
+                    else
+                    {
+                        float maxFoot = HillRadiusMax - GameBootstrap.FloorHalf - HillClearance;
+                        float shrink = maxFoot / halfFoot;
+                        sx *= shrink;
+                        sz *= shrink;
+                        radius = HillRadiusMax;
+                    }
+                }
 
                 // Centre at y = 0: exactly half the sphere is buried in the
                 // meadow plane (whose top face is at y = -0.05).
@@ -248,33 +287,50 @@ namespace WhackySlappy.Core
 
         /// <summary>
         /// MeadowPatchCount flattened cylinders (radius 6..12 m) at random
-        /// angles, placed so their rims stay inside the MeadowPatchInner..
-        /// Outer ring (a 12 m disc centred at 25 m would otherwise poke
-        /// into the 20 m arena and through the grass floor), alternating
-        /// two greens, no colliders, no shadow handling (flat discs;
-        /// they receive light like the plane under them).
+        /// positions in the 25..70 m band, REJECT-AND-RESAMPLED until the
+        /// whole disc lies outside the arena square plus a 2 m band
+        /// (max(|cx|, |cz|) >= FloorHalf + r + 2); after MeadowPatchTries
+        /// failed draws the patch is skipped. Rejection instead of a
+        /// clamp, because a radial min-distance cannot express the square
+        /// test: a 12 m disc at 25 m and 45 degrees has its centre inside
+        /// the ±20 m walls to begin with. No colliders; y = 0.01 above the
+        /// meadow plane so no z-fight.
         /// </summary>
         private static void BuildMeadowPatches(Transform horizon, System.Random rng)
         {
             for (int i = 0; i < MeadowPatchCount; i++)
             {
-                float angle = (float)rng.NextDouble() * Mathf.PI * 2f;
-                float dist = Mathf.Lerp(MeadowPatchInner, MeadowPatchOuter,
-                    (float)rng.NextDouble());
-                float r = Mathf.Lerp(MeadowPatchMinR, MeadowPatchMaxR,
-                    (float)rng.NextDouble());
-                // Push wide discs out so the rim never crosses the wall
-                // line (a 12 m disc centred at 25 m would spill 5 m into
-                // the arena and over the fence).
-                if (dist < r + MeadowPatchWallClear)
-                    dist = r + MeadowPatchWallClear;
+                float cx = 0f, cz = 0f, r = 0f;
+                bool placed = false;
+                for (int tryIdx = 0; tryIdx < MeadowPatchTries; tryIdx++)
+                {
+                    float angle = (float)rng.NextDouble() * Mathf.PI * 2f;
+                    float dist = Mathf.Lerp(MeadowPatchInner, MeadowPatchOuter,
+                        (float)rng.NextDouble());
+                    r = Mathf.Lerp(MeadowPatchMinR, MeadowPatchMaxR,
+                        (float)rng.NextDouble());
+                    cx = Mathf.Cos(angle) * dist;
+                    cz = Mathf.Sin(angle) * dist;
+
+                    float reach = GameBootstrap.FloorHalf + r + MeadowPatchMargin;
+                    if (Mathf.Max(Mathf.Abs(cx), Mathf.Abs(cz)) < reach)
+                        continue;
+
+                    // And keep the far rim under the tree line (78 m).
+                    if (dist + r > MeadowPatchOuter + 8f)
+                        continue;
+
+                    placed = true;
+                    break;
+                }
+
+                if (!placed)
+                    continue;
 
                 var disc = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
                 disc.name = "MeadowPatch_" + i;
                 disc.transform.SetParent(horizon, false);
-                disc.transform.position = new Vector3(
-                    Mathf.Cos(angle) * dist, MeadowPatchY,
-                    Mathf.Sin(angle) * dist);
+                disc.transform.position = new Vector3(cx, MeadowPatchY, cz);
                 disc.transform.localScale = new Vector3(
                     r * 2f, MeadowPatchThick, r * 2f);
                 RemoveCollider(disc);
