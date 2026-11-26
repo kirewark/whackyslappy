@@ -118,6 +118,17 @@ namespace WhackySlappy.NPC
         /// spawn.</summary>
         private const float kFeetBelowRoot = 0.8f;
 
+        /// <summary>Radius (m) of the invisible support capsule: exactly
+        /// the old full-height torso collider's radius (primitive capsule
+        /// radius 0.5 scaled by the old 0.7 x/z).</summary>
+        private const float kSupportRadius = 0.35f;
+
+        /// <summary>Height (m) of the invisible support capsule: exactly
+        /// the old torso collider's world height (2 m primitive scaled
+        /// 0.8 tall), centred on the pivot, so its bottom sits at foot
+        /// level and the standing root y stays kFeetBelowRoot.</summary>
+        private const float kSupportHeight = 2f * kFeetBelowRoot;
+
         // -------------------------------------------------------------------------
         // Internal state
         // -------------------------------------------------------------------------
@@ -147,11 +158,21 @@ namespace WhackySlappy.NPC
 
         // The NPC's own torso capsule, built by Create(). Once
         // NpcBodyBuilder.AddLimbs runs, every capsule collider under the
-        // root belongs to a limb rigidbody EXCEPT the torso, whose collider
-        // attaches to the root rigidbody — so GetComponentInChildren<
+        // root belongs to a limb rigidbody EXCEPT the torso's and the
+        // invisible support's (see m_supportCollider), which both attach
+        // to the root rigidbody — so GetComponentInChildren<
         // CapsuleCollider>() is no longer safe and every read goes through
         // this cached reference (see SetTorso / EnsureTorsoCollider).
         private CapsuleCollider m_torsoCollider;
+
+        // Invisible full-height support capsule on the root Rigidbody
+        // GameObject (no renderer). The short torso no longer reaches the
+        // floor and the jointed limbs cannot carry it (loose joints), so
+        // the NPC crumples without it; this reproduces the old full-height
+        // torso collider exactly (centre on the pivot, radius 0.35, height
+        // 1.6, bottom at foot level). Same NPC layer as the torso, so it
+        // is also part of the slap hitbox. Assigned by Create().
+        private CapsuleCollider m_supportCollider;
 
         // Reactive face built by Create() through NpcFace.Build(); may be
         // null (e.g. hand-placed prefab NPCs). NpcFace is a MonoBehaviour,
@@ -258,9 +279,10 @@ namespace WhackySlappy.NPC
 
         /// <summary>
         /// Fallback for m_torsoCollider when the NPC was not built by
-        /// Create(): the torso is the ONLY body collider whose attached
-        /// rigidbody is the NPC root (each limb capsule has its own
-        /// rigidbody), so the root-rigidbody match identifies it
+        /// Create(): the torso is the only body collider (besides the
+        /// invisible support, excluded via m_supportCollider) whose
+        /// attached rigidbody is the NPC root (each limb capsule has its
+        /// own rigidbody), so the root-rigidbody match identifies it
         /// unambiguously. Idempotent.
         /// </summary>
         private void EnsureTorsoCollider()
@@ -270,7 +292,8 @@ namespace WhackySlappy.NPC
             CapsuleCollider[] caps = GetComponentsInChildren<CapsuleCollider>();
             for (int i = 0; i < caps.Length; i++)
             {
-                if (caps[i] != null && caps[i].attachedRigidbody == m_rb)
+                if (caps[i] != null && caps[i] != m_supportCollider
+                    && caps[i].attachedRigidbody == m_rb)
                 {
                     m_torsoCollider = caps[i];
                     break;
@@ -294,6 +317,11 @@ namespace WhackySlappy.NPC
             // Silly physics: one bouncy material on the body collider, plus a
             // squash pivot that is safe to scale (null for primitive NPCs).
             SetupBounceMaterial(bodyCapsule);
+            // The support capsule (not the short torso) is what stands on
+            // the floor: give it the SAME PhysicsMaterial instance so
+            // bounce/friction stay in sync with the silliness slider.
+            if (m_supportCollider != null && m_bounceMaterial != null)
+                m_supportCollider.material = m_bounceMaterial;
             SetupSquashPivot();
         }
 
@@ -938,6 +966,26 @@ namespace WhackySlappy.NPC
             rb.angularDamping = 0.5f;
             rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
 
+            // Invisible support capsule on the root Rigidbody GameObject
+            // (AddComponent: no renderer, never visible). Before the torso
+            // was shortened, the torso collider itself spanned y = -0.8 to
+            // +0.8 around the pivot and held the NPC up; now only the
+            // jointed limb rigidbodies reach the floor and they cannot
+            // carry the torso through their loose joints, so the NPC
+            // crumples. Recreate the old extents exactly: centre on the
+            // pivot, radius 0.35, height 1.6, so the bottom sits at foot
+            // level (-0.8) and the standing root y is kFeetBelowRoot. Must
+            // run BEFORE NpcBodyBuilder.AddLimbs so the ignore-collision
+            // pass (GetComponentsInChildren<Collider>) covers it and limbs
+            // hang through it. Being on the root GameObject it shares the
+            // NPC layer (slap queries use GameLayers.MaskNPC) and the root
+            // carries NpcController, so a hit here resolves through
+            // GetComponentInParent<ISlappable> exactly like a torso hit.
+            var support = go.AddComponent<CapsuleCollider>();
+            support.radius = kSupportRadius;
+            support.height = kSupportHeight;
+            support.center = Vector3.zero;
+
             // Ragdoll-style arms and legs (8 jointed capsules, each with its
             // own Rigidbody + CapsuleCollider, children of the root). Must
             // run after the root Rigidbody exists (the joints connect to it)
@@ -975,10 +1023,11 @@ namespace WhackySlappy.NPC
 
             var controller = go.AddComponent<NpcController>();
             controller.m_spawner = spawner;
-            // Cache the two physics-critical/behaviour references before any
+            // Cache the physics-critical/behaviour references before any
             // controller code can run (Awake already fired ApplyLowCenter-
             // OfMass during AddComponent, and Create repeats it below).
             controller.SetTorso(capsule);
+            controller.m_supportCollider = support;
             controller.SetFace(face);
 
             // Plan A1: set center of mass after controller is created.

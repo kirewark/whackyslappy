@@ -111,7 +111,9 @@ namespace WhackySlappy.NPC
             AddJoint(rightShin.gameObject, rightThigh, TopAnchor, 60f, 25f, -10f, 10f);
 
             // Ignore collisions between every pair of body colliders
-            // (torso, head and all limbs) so the joints do not self-collide.
+            // (support capsule, torso, head and all limbs) so the joints
+            // do not self-collide and the limbs hang through the
+            // invisible full-height support capsule on the root.
             List<Collider> allColliders =
                 new List<Collider>(npcRoot.GetComponentsInChildren<Collider>());
             for (int a = 0; a < allColliders.Count; a++)
