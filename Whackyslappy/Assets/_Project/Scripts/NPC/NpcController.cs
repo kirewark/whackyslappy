@@ -243,6 +243,10 @@ namespace WhackySlappy.NPC
         // bounciness tracks SillyPhysics.BounceFactor each physics tick.
         private PhysicsMaterial m_bounceMaterial;
 
+        // Dedicated skate material for the support capsule's floor contact.
+        [System.NonSerialized]
+        private PhysicsMaterial m_supportMaterial;
+
         // Rigidbody angular-velocity cap captured at Awake; the spin boost is
         // added on top of it every tick and vanishes with Silliness 0.
         private float m_baseMaxAngularVelocity = 7f;
@@ -380,11 +384,40 @@ namespace WhackySlappy.NPC
             // squash pivot that is safe to scale (null for primitive NPCs).
             SetupBounceMaterial(bodyCapsule);
             // The support capsule (not the short torso) is what stands on
-            // the floor: give it the SAME PhysicsMaterial instance so
-            // bounce/friction stay in sync with the silliness slider.
-            if (m_supportCollider != null && m_bounceMaterial != null)
-                m_supportCollider.material = m_bounceMaterial;
+            // the floor. It gets a dedicated low-friction 'skate' material,
+            // NOT the shared bounce instance: with that one (dynamicFriction
+            // 0.6, Average combine against the floor's default 0.6) ground
+            // friction removes up to mu*N*dt = 0.6*3.1*9.81*0.02 = 0.36 N*s
+            // of momentum per physics step - more than SteerHorizontal can
+            // add (8 m/s^2 * 0.02 s on the 1.5 kg root = 0.24 N*s) - so
+            // static friction re-grips every step and the NPC never passes
+            // ~0.2 m/s. Skate friction (0.05, Minimum combine) removes
+            // 0.03 N*s per step. Bounce feel stays on the torso material.
+            if (m_supportCollider != null)
+                m_supportCollider.material = CreateSupportMaterial();
             SetupSquashPivot();
+        }
+
+        /// <summary>
+        /// Low-friction 'skate' material for the support capsule. Created
+        /// once per controller. Minimum combine so the low value wins
+        /// against the floor's default 0.6 material.
+        /// </summary>
+        private PhysicsMaterial CreateSupportMaterial()
+        {
+            if (m_supportMaterial == null)
+            {
+                m_supportMaterial = new PhysicsMaterial(
+                    name + "_SupportSkate");
+                m_supportMaterial.staticFriction = 0.05f;
+                m_supportMaterial.dynamicFriction = 0.05f;
+                m_supportMaterial.frictionCombine =
+                    PhysicsMaterialCombine.Minimum;
+                m_supportMaterial.bounciness = 0f;
+                m_supportMaterial.bounceCombine =
+                    PhysicsMaterialCombine.Minimum;
+            }
+            return m_supportMaterial;
         }
 
         /// <summary>
