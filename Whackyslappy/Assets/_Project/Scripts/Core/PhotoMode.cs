@@ -141,10 +141,12 @@ namespace WhackySlappy.Core
 
                 if (m_shot == "overview")
                 {
-                    // Straight down over the whole 20 x 20 arena at fov 60
-                    // (vertical span at 26 m is ~30 m). Normal spawning
-                    // continues untouched.
-                    SetFixedCamera(new Vector3(0f, 26f, 0f), Quaternion.Euler(90f, 0f, 0f));
+                    // Straight down over the whole FloorSize x FloorSize
+                    // (60 x 60 m) arena at the camera's default fov 60:
+                    // at FloorSize + 5 m the vertical span is ~75 m, so the
+                    // edge strips stay on screen whatever the CI viewport.
+                    // Normal spawning continues untouched.
+                    SetFixedCamera(new Vector3(0f, GameBootstrap.FloorSize + 5f, 0f), Quaternion.Euler(90f, 0f, 0f));
                 }
                 else if (m_shot == "slap")
                 {
@@ -185,6 +187,11 @@ namespace WhackySlappy.Core
                 var camGo = new GameObject("PhotoModeCamera");
                 Camera cam = camGo.AddComponent<Camera>();
                 cam.depth = 100f;
+                // The overview camera is high enough that the arena's linear
+                // fog (start 25 m) would wash out the whole shot; photo
+                // cameras render clear of fog (slap/getup sit inside the
+                // fog start distance, so their look does not change).
+                cam.fog = false;
                 camGo.transform.SetPositionAndRotation(position, rotation);
             }
 

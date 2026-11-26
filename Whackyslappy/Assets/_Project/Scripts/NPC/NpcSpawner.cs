@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using WhackySlappy.Core;
 
 namespace WhackySlappy.NPC
 {
@@ -108,8 +109,8 @@ namespace WhackySlappy.NPC
             int attempts = 0;
             do
             {
-                float x = Random.Range(-9f, 9f);
-                float z = Random.Range(-9f, 9f);
+                float x = Random.Range(-(GameBootstrap.FloorHalf - 1f), GameBootstrap.FloorHalf - 1f);
+                float z = Random.Range(-(GameBootstrap.FloorHalf - 1f), GameBootstrap.FloorHalf - 1f);
                 spawnPos = new Vector3(x, 1.0f, z);
                 attempts++;
             } while (player != null &&
