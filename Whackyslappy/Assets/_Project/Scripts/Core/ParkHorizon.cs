@@ -56,7 +56,7 @@ namespace WhackySlappy.Core
             {
                 // One hill per ring slot with jitter so spacing is even but
                 // never a perfect circle.
-                float angle = (i + (float)(rng.NextDouble() - 0.5) * 0.7)
+                float angle = (i + (float)(rng.NextDouble() - 0.5) * 0.7f)
                     / HillCount * (Mathf.PI * 2f);
                 float radius = Mathf.Lerp(HillRadiusMin, HillRadiusMax, (float)rng.NextDouble());
                 float sx = Mathf.Lerp(40f, 70f, (float)rng.NextDouble());
@@ -105,8 +105,8 @@ namespace WhackySlappy.Core
         {
             // Offset from the hill centre; kept inside 0.5 of each half-
             // axis so the surface-height maths below stays real.
-            float ox = (float)(rng.NextDouble() - 0.5) * sx * 0.5;
-            float oz = (float)(rng.NextDouble() - 0.5) * sz * 0.5;
+            float ox = (float)(rng.NextDouble() - 0.5) * sx * 0.5f;
+            float oz = (float)(rng.NextDouble() - 0.5) * sz * 0.5f;
             float nx = ox / (sx * 0.5f);
             float nz = oz / (sz * 0.5f);
             float groundY = hillPos.y + sy * 0.5f
@@ -132,19 +132,95 @@ namespace WhackySlappy.Core
                 : Mathf.Lerp(3.0f, 4.5f, (float)rng.NextDouble());
             float canopyW = pine ? canopyH * 0.55f : canopyH * 1.2f;
 
-            var canopy = GameObject.CreatePrimitive(pine ? PrimitiveType.Cone : PrimitiveType.Sphere);
-            canopy.name = pine ? "TreePineTop" : "TreeCanopy";
+            // PrimitiveType has no Cone (CS0117), so pines use one shared
+            // procedural cone mesh (unit cone: base ring at local y = 0,
+            // radius 0.5, apex at y = 1, pivot at the base). Material and
+            // shadows are handled by Tint/DisableShadow like the other
+            // props; the cone gets no collider at all.
+            GameObject canopy;
+            if (pine)
+            {
+                canopy = new GameObject("TreePineTop");
+                canopy.AddComponent<MeshFilter>().sharedMesh = PineConeMesh();
+                canopy.AddComponent<MeshRenderer>();
+            }
+            else
+            {
+                canopy = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                canopy.name = "TreeCanopy";
+                RemoveCollider(canopy);
+            }
             canopy.transform.SetParent(horizon, false);
-            // Cones and spheres are centred too; 0.42 of the canopy height
-            // above the trunk top overlaps it slightly.
+            // Canopy centre sits 0.42 of the canopy height above the
+            // trunk top so it overlaps the trunk slightly, as before.
+            // Spheres are centred on their transform; the cone mesh has
+            // its pivot at the base, so its origin drops half a scaled
+            // height to keep the same centre (scale y = canopyH).
             float canopyY = groundY + trunkH - 0.25f + canopyH * 0.42f;
-            canopy.transform.position = basePos + new Vector3(0f, canopyY, 0f);
+            canopy.transform.position = basePos + new Vector3(
+                0f, pine ? canopyY - canopyH * 0.5f : canopyY, 0f);
             canopy.transform.localScale = pine
                 ? new Vector3(canopyW, canopyH, canopyW)
                 : new Vector3(canopyW, canopyH * 0.9f, canopyW);
-            RemoveCollider(canopy);
             DisableShadow(canopy);
             Tint(canopy, Color.Lerp(LeafDark, LeafLight, (float)rng.NextDouble()));
+        }
+
+        // One procedural cone shared by every pine canopy, built on first
+        // use and never modified afterwards, so assigning it to several
+        // MeshFilters as sharedMesh is safe.
+        private static Mesh m_pineConeMesh;
+
+        /// <summary>
+        /// Unit cartoon cone: 12-vertex base ring (radius 0.5) at y = 0,
+        /// one apex at y = 1, plus the base-centre vertex for the bottom
+        /// cap. Height 1 and radius 0.5 in mesh space mean a world scale
+        /// of (width, height, width) produces the wanted proportions.
+        /// </summary>
+        private static Mesh PineConeMesh()
+        {
+            if (m_pineConeMesh != null)
+                return m_pineConeMesh;
+
+            const int Segments = 12;
+            // Vertex 0 = base centre, 1 = apex, 2..13 = base ring walking
+            // counter-clockwise around +Y.
+            var verts = new Vector3[Segments + 2];
+            verts[0] = new Vector3(0f, 0f, 0f);
+            verts[1] = new Vector3(0f, 1f, 0f);
+            for (int i = 0; i < Segments; i++)
+            {
+                float a = 2f * Mathf.PI * i / Segments;
+                verts[2 + i] = new Vector3(0.5f * Mathf.Cos(a), 0f, 0.5f * Mathf.Sin(a));
+            }
+
+            // Unity culls front faces as triangles seen CLOCKWISE from the
+            // viewer, and RecalculateNormals puts the face normal on the
+            // side its vertices wind clockwise from. So winding each
+            // triangle clockwise as seen from OUTSIDE the cone gives
+            // outward normals: sides apex -> next -> base (the ring walks
+            // CCW from above), base cap base -> next -> centre (clockwise
+            // seen from below, normal -Y).
+            var tris = new int[Segments * 6];
+            int t = 0;
+            for (int i = 0; i < Segments; i++)
+            {
+                int next = (i + 1) % Segments;
+                tris[t++] = 1;
+                tris[t++] = 2 + next;
+                tris[t++] = 2 + i;
+                tris[t++] = 2 + i;
+                tris[t++] = 2 + next;
+                tris[t++] = 0;
+            }
+
+            var mesh = new Mesh();
+            mesh.vertices = verts;
+            mesh.triangles = tris;
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+            m_pineConeMesh = mesh;
+            return m_pineConeMesh;
         }
 
         /// <summary>
