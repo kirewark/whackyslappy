@@ -7,8 +7,12 @@ namespace WhackySlappy.Core
     /// Builds the cartoon atmosphere for the arena: solid sky colour on the
     /// cameras, trilight ambient light, soft horizon-matching linear fog, a
     /// warm sun, a procedural grass texture on the floor, a big visual-only
-    /// meadow ground plane with a mown-path border, and a distant hill and
-    /// tree horizon (ParkHorizon). Called once by GameBootstrap after the
+    /// meadow ground plane with a mown-path border, in-arena cartoon props
+    /// (ArenaProps) and a distant hill and tree horizon (ParkHorizon). The
+    /// sky is a plain camera clear colour: the earlier emission-keyword
+    /// gradient dome rendered BLACK in WebGL builds (runtime-created shader
+    /// variants get stripped) and hid the clear colour, so it is gone.
+    /// Called once by GameBootstrap after the
     /// floor exists. Safe to call twice: settings are re-applied and objects
     /// are not duplicated.
     /// </summary>
@@ -16,10 +20,15 @@ namespace WhackySlappy.Core
     {
         // Tuning values live here as constants because a static builder
         // has no Inspector (same style as GameBootstrap.FloorSize).
-        // Sky clear colour is a deeper blue than the fog colour (a pale
-        // blue-white horizon), so hills and meadow fade into the lower sky.
-        private static readonly Color SkyColor = new Color(0.45f, 0.72f, 1.0f);
-        private static readonly Color HorizonHaze = new Color(0.75f, 0.88f, 0.98f);
+        // Sky and fog are deliberately CLOSE but not identical: fog is
+        // the horizon haze band, the camera clear colour the sky just
+        // above it — close enough that fogged geometry melts into the
+        // sky without a visible seam. No skybox material and no sky
+        // dome: the earlier emission-keyword dome created a shader
+        // variant WebGL builds strip, rendering BLACK over the clear
+        // colour.
+        private static readonly Color SkyColor = new Color(0.50f, 0.75f, 0.98f);
+        private static readonly Color HorizonHaze = new Color(0.62f, 0.82f, 0.98f);
         private static readonly Color AmbientSky = new Color(0.6f, 0.8f, 1.0f);
         private static readonly Color AmbientEquator = new Color(0.8f, 0.8f, 0.7f);
         private static readonly Color AmbientGround = new Color(0.4f, 0.35f, 0.3f);
@@ -28,11 +37,15 @@ namespace WhackySlappy.Core
         private static readonly Color GrassDarkGreen = new Color(0.38f, 0.62f, 0.26f);
         private static readonly Color FleckLight = new Color(0.55f, 0.78f, 0.35f);
         private static readonly Color FleckDark = new Color(0.30f, 0.50f, 0.22f);
-        private static readonly Color MeadowColor = new Color(0.32f, 0.45f, 0.25f);
+        private static readonly Color MeadowColor = new Color(0.36f, 0.58f, 0.26f);
         private static readonly Color PathColor = new Color(0.60f, 0.45f, 0.28f);
 
         private const float FogStart = 40f;
         private const float FogEnd = 160f;
+        // Far plane for every camera: the 400 m ground plane's corners
+        // (~283 m from the origin) sit well inside it, and linear fog
+        // (opaque by 160 m) hides anything past that anyway.
+        private const float CameraFarPlane = 500f;
         private const float SunIntensity = 1.1f;
         private const float GroundPlaneSize = 400f;
         // One grass texture tile spans 8 m of world, so the light/dark
@@ -46,25 +59,26 @@ namespace WhackySlappy.Core
         /// </summary>
         public static void Build(GameObject arenaRoot)
         {
-            ApplySky();
+            ApplySky(arenaRoot);
             ApplyAmbientAndFog();
             EnsureSun(arenaRoot);
             ApplyFloorLook(arenaRoot);
             CreateGroundPlane(arenaRoot);
             CreatePathBorder(arenaRoot);
             GrassTufts.Build(arenaRoot, GraphicsQuality.Level);
+            ArenaProps.Build(arenaRoot);
             ParkHorizon.Build(arenaRoot);
         }
 
         /// <summary>
         /// Removes any skybox material and makes every camera clear to a
-        /// solid sky-blue colour. A gradient sky dome would need a custom
-        /// shader, and Shader.Find is banned for runtime materials in this
-        /// repo (it can return null in a WebGL build), so we use a solid
-        /// colour instead and match the fog colour to the near-horizon
-        /// part of that sky (see ApplyAmbientAndFog).
+        /// single plain sky colour. No dome mesh, no emission keyword,
+        /// no extra shader variant — a WebGL build with only the stock
+        /// lit variant still shows the clear colour. Far planes are
+        /// raised to CameraFarPlane so the 400 m ground plane never
+        /// clips.
         /// </summary>
-        private static void ApplySky()
+        private static void ApplySky(GameObject arenaRoot)
         {
             RenderSettings.skybox = null;
 
@@ -73,14 +87,16 @@ namespace WhackySlappy.Core
             {
                 cameras[i].clearFlags = CameraClearFlags.SolidColor;
                 cameras[i].backgroundColor = SkyColor;
+                if (cameras[i].farClipPlane < CameraFarPlane)
+                    cameras[i].farClipPlane = CameraFarPlane;
             }
         }
 
         /// <summary>
-        /// Trilight ambient light plus linear fog. The fog colour is the
-        /// pale blue-white horizon haze (a touch lighter than the sky clear
-        /// colour) so the hills and the 400 m meadow plane fade out before
-        /// their edges ever show against the deeper upper sky.
+        /// Trilight ambient light plus linear fog. The fog colour is
+        /// close to the camera clear colour, so the hills and the 400 m
+        /// meadow plane fade out before
+        /// their edges ever show against the sky.
         /// </summary>
         private static void ApplyAmbientAndFog()
         {
