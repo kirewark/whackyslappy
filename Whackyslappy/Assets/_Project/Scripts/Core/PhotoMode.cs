@@ -283,6 +283,7 @@ namespace WhackySlappy.Core
                       .Append(",\"tilt\":").Append(npc.TiltDegrees.ToString("F1", CultureInfo.InvariantCulture))
                       .Append(",\"tumbling\":").Append(npc.IsTumbling ? "true" : "false")
                       .Append(",\"speed\":").Append(npc.Speed.ToString("F2", CultureInfo.InvariantCulture))
+                      .Append(",\"walking\":").Append(npc.IsWalking ? "true" : "false")
                       .Append('}');
 
                     // Stay well under the CI's 2000-char line limit; with

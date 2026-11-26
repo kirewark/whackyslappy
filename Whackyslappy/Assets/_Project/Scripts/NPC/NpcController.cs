@@ -15,14 +15,46 @@ namespace WhackySlappy.NPC
         // Tuning (Design.md §4.3, §4.4)
         // -------------------------------------------------------------------------
 
-        /// <summary>Speed at which the NPC wanders toward the player (m/s).</summary>
-        [SerializeField] private float m_wanderSpeed = 1.0f;
+        /// <summary>Horizontal walking pace used by the wander steering
+        /// (m/s). Velocity steering only ever drives up to this speed, so a
+        /// knockback impulse above it is never speed-capped back down.</summary>
+        [SerializeField] private float m_wanderSpeed = 1.6f;
 
-        /// <summary>Force multiplier applied during wandering.</summary>
-        [SerializeField] private float m_wanderForce = 5.0f;
+        /// <summary>Horizontal-velocity acceleration (m/s^2) the wander
+        /// steering applies toward the desired velocity (NpcWander.
+        /// SteerHorizontal max step per fixed tick is this times the fixed
+        /// timestep). Replace the old 5 N wander push, which friction and
+        /// damping swamped at mass 1.5.</summary>
+        [SerializeField] private float m_wanderAccel = 8f;
 
-        /// <summary>Minimum distance (m) to the player before stopping the push.</summary>
-        [SerializeField] private float m_wanderStopDistance = 1.2f;
+        /// <summary>Idle pause (s) after reaching a wander target, before
+        /// starting to walk to the next one. Range endpoints.</summary>
+        [SerializeField] private float m_idlePauseMin = 0.5f;
+        [SerializeField] private float m_idlePauseMax = 2.5f;
+
+        /// <summary>Distance (m) to the wander target counted as arrived.</summary>
+        [SerializeField] private float m_wanderArriveDistance = 0.8f;
+
+        /// <summary>Minimum horizontal distance (m) from the current
+        /// position a fresh wander target must be, so the NPC never picks a
+        /// point it is already standing on.</summary>
+        [SerializeField] private float m_wanderMinTargetDistance = 3f;
+
+        /// <summary>Horizontal speed (m/s) under which the NPC counts as
+        /// blocked while it should be walking (wedged against a prop).</summary>
+        [SerializeField] private float m_stuckSpeed = 0.2f;
+
+        /// <summary>How long (s) the NPC must stay below m_stuckSpeed while
+        /// walking before it gives up on the target and picks a new one.
+        /// m_stuckBrakeTime is the short standstill after that.</summary>
+        [SerializeField] private float m_stuckTime = 1f;
+        [SerializeField] private float m_stuckBrakeTime = 0.3f;
+
+        /// <summary>Max yaw rate (deg/s) the facing controller turns the
+        /// NPC toward its travel direction, and the P gain (1/s) turning
+        /// the yaw error into that rate.</summary>
+        [SerializeField] private float m_turnSpeedDeg = 360f;
+        [SerializeField] private float m_turnProportional = 4f;
 
         /// <summary>Self-righting angular-velocity damping in Wander state.</summary>
         [SerializeField] private float m_uprightDampingWander = 2.0f;
@@ -58,8 +90,10 @@ namespace WhackySlappy.NPC
         /// shared GameBootstrap arena constant.</summary>
         [SerializeField] private float m_platformHalfSize = GameBootstrap.FloorHalf;
 
-        /// <summary>Margin (m) from platform edge for safe wander points.</summary>
-        [SerializeField] private float m_wanderMargin = 1.5f;
+        /// <summary>Margin (m) from platform edge for safe wander points.
+        /// 3 m keeps the target limit (±17 m) clear of the fence line at
+        /// 19.4 m even when the prop-rejection probe bulges past it.</summary>
+        [SerializeField] private float m_wanderMargin = 3f;
 
         /// <summary>Color for the head mesh (randomized on spawn).</summary>
         [SerializeField] private Color m_headColor = Color.cyan;
@@ -164,6 +198,13 @@ namespace WhackySlappy.NPC
         // (self-righting suppressed, GettingUp transition blocked).
         private float m_knockdownTimer = 0f;
         private Vector3 m_wanderTarget = Vector3.zero;
+        // Phase 5a wander steering state: > 0 while pausing at an arrival,
+        // accumulates while walking below m_stuckSpeed, false once a valid
+        // target exists. All reset by ResetToWander and state transitions.
+        private bool m_hasWanderTarget = false;
+        private float m_idleTimer = 0f;
+        private float m_stuckTimer = 0f;
+        private bool m_isWalking = false;
 
         // World distance from the root pivot down to the feet. The jointed
         // legs, NOT the torso capsule, reach the floor in the current body
@@ -201,6 +242,10 @@ namespace WhackySlappy.NPC
         // Silly physics: bounce material created once in Start; its
         // bounciness tracks SillyPhysics.BounceFactor each physics tick.
         private PhysicsMaterial m_bounceMaterial;
+
+        // Dedicated skate material for the support capsule's floor contact.
+        [System.NonSerialized]
+        private PhysicsMaterial m_supportMaterial;
 
         // Rigidbody angular-velocity cap captured at Awake; the spin boost is
         // added on top of it every tick and vanishes with Silliness 0.
@@ -339,11 +384,40 @@ namespace WhackySlappy.NPC
             // squash pivot that is safe to scale (null for primitive NPCs).
             SetupBounceMaterial(bodyCapsule);
             // The support capsule (not the short torso) is what stands on
-            // the floor: give it the SAME PhysicsMaterial instance so
-            // bounce/friction stay in sync with the silliness slider.
-            if (m_supportCollider != null && m_bounceMaterial != null)
-                m_supportCollider.material = m_bounceMaterial;
+            // the floor. It gets a dedicated low-friction 'skate' material,
+            // NOT the shared bounce instance: with that one (dynamicFriction
+            // 0.6, Average combine against the floor's default 0.6) ground
+            // friction removes up to mu*N*dt = 0.6*3.1*9.81*0.02 = 0.36 N*s
+            // of momentum per physics step - more than SteerHorizontal can
+            // add (8 m/s^2 * 0.02 s on the 1.5 kg root = 0.24 N*s) - so
+            // static friction re-grips every step and the NPC never passes
+            // ~0.2 m/s. Skate friction (0.05, Minimum combine) removes
+            // 0.03 N*s per step. Bounce feel stays on the torso material.
+            if (m_supportCollider != null)
+                m_supportCollider.material = CreateSupportMaterial();
             SetupSquashPivot();
+        }
+
+        /// <summary>
+        /// Low-friction 'skate' material for the support capsule. Created
+        /// once per controller. Minimum combine so the low value wins
+        /// against the floor's default 0.6 material.
+        /// </summary>
+        private PhysicsMaterial CreateSupportMaterial()
+        {
+            if (m_supportMaterial == null)
+            {
+                m_supportMaterial = new PhysicsMaterial(
+                    name + "_SupportSkate");
+                m_supportMaterial.staticFriction = 0.05f;
+                m_supportMaterial.dynamicFriction = 0.05f;
+                m_supportMaterial.frictionCombine =
+                    PhysicsMaterialCombine.Minimum;
+                m_supportMaterial.bounciness = 0f;
+                m_supportMaterial.bounceCombine =
+                    PhysicsMaterialCombine.Minimum;
+            }
+            return m_supportMaterial;
         }
 
         /// <summary>
@@ -521,6 +595,15 @@ namespace WhackySlappy.NPC
         /// </summary>
         public bool IsTumbling => m_state == State.Tumbling;
         public bool IsGettingUp => m_state == State.GettingUp;
+
+        /// <summary>True while the NPC is actively steering toward its
+        /// wander target (false during idle pauses). Read by photo mode
+        /// and EditMode tests.</summary>
+        public bool IsWalking => m_isWalking;
+
+        /// <summary>The point the NPC is walking to this phase (read
+        /// only; photo mode / EditMode tests).</summary>
+        public Vector3 WanderTarget => m_wanderTarget;
 
         /// <summary>Angle (degrees) between this NPC's up axis and world up.</summary>
         public float TiltDegrees => Vector3.Angle(transform.up, Vector3.up);
@@ -775,43 +858,141 @@ namespace WhackySlappy.NPC
                 m_state = State.Tumbling;
                 m_settleTimer = 0f;
                 m_tumbleTimer = 0f;
+                m_isWalking = false;
                 return; // no wander push while fallen
             }
 
-            // Cached player transform for distance check and direction.
-            var player = GetCachedPlayerTransform();
+            // Phase 5a: the cached player lookup is retained for the
+            // later aggro work, but wandering no longer depends on the
+            // player existing or being near, and no longer stops when a
+            // player stands in front of the NPC.
+            GetCachedPlayerTransform();
 
-            if (player != null)
+            float dt = Time.fixedDeltaTime;
+
+            // Idle pause after reaching a target (also the short brake
+            // after getting wedged on a prop): drive the horizontal
+            // velocity to zero and stand still.
+            if (m_idleTimer > 0f)
             {
-                float dist = Vector3.Distance(
-                    new Vector3(transform.position.x, 0, transform.position.z),
-                    new Vector3(player.position.x, 0, player.position.z));
+                m_idleTimer -= dt;
+                m_isWalking = false;
+                m_stuckTimer = 0f;
+                SteerWander(Vector3.zero, dt);
+                return;
+            }
 
-                if (dist > m_wanderStopDistance)
+            Vector3 flatToTarget = m_wanderTarget - transform.position;
+            flatToTarget.y = 0f; // Only move on XZ plane.
+
+            // No target yet (fresh spawn / recycled NPC), the target
+            // turned invalid, or close enough to call it an arrival:
+            // pick a fresh point, then idle a moment before walking.
+            if (!m_hasWanderTarget
+                || flatToTarget.magnitude < m_wanderArriveDistance
+                || !IsValidWanderPoint(m_wanderTarget))
+            {
+                m_wanderTarget = RandomWanderPoint();
+                m_hasWanderTarget = true;
+                m_idleTimer = Random.Range(m_idlePauseMin, m_idlePauseMax);
+                m_isWalking = false;
+                m_stuckTimer = 0f;
+                SteerWander(Vector3.zero, dt);
+                return;
+            }
+
+            Vector3 dir = flatToTarget.normalized;
+
+            // Walking straight into a prop (trees/rocks are Environment;
+            // a horizontal ray 0.5 m up never clips the floor collider,
+            // whose top sits at y 0): drop this target immediately and
+            // steer toward a fresh one, no idle pause.
+            if (Physics.Raycast(transform.position + Vector3.up * 0.5f, dir,
+                                1f, GameLayers.MaskEnvironment))
+            {
+                m_wanderTarget = RandomWanderPoint();
+                m_hasWanderTarget = true;
+                flatToTarget = m_wanderTarget - transform.position;
+                flatToTarget.y = 0f;
+                dir = flatToTarget.normalized;
+            }
+
+            // Stuck handling: should be walking but barely moving
+            // (wedged against a prop): after m_stuckTime, take a new
+            // target and brake for m_stuckBrakeTime.
+            Vector3 velocity = m_rb.linearVelocity;
+            Vector3 horizVel = new Vector3(velocity.x, 0f, velocity.z);
+            if (horizVel.magnitude < m_stuckSpeed)
+            {
+                m_stuckTimer += dt;
+                if (m_stuckTimer >= m_stuckTime)
                 {
-                    // Pick a new wander target if needed.
-                    if (Vector3.Distance(transform.position, m_wanderTarget) < 0.5f
-                        || !IsValidWanderPoint(m_wanderTarget))
-                    {
-                        m_wanderTarget = RandomWanderPoint();
-                    }
-
-                    Vector3 direction = (m_wanderTarget - transform.position);
-                    direction.y = 0f; // Only move on XZ plane.
-                    direction = direction.normalized;
-
-                    m_rb.AddForce(direction * m_wanderForce, ForceMode.Force);
-
-                    // Cap speed.
-                    if (m_rb.linearVelocity.magnitude > m_wanderSpeed * 3f)
-                        m_rb.linearVelocity = m_rb.linearVelocity.normalized * m_wanderSpeed * 3f;
+                    m_wanderTarget = RandomWanderPoint();
+                    m_hasWanderTarget = true;
+                    m_idleTimer = m_stuckBrakeTime;
+                    m_stuckTimer = 0f;
+                    m_isWalking = false;
+                    SteerWander(Vector3.zero, dt);
+                    return;
                 }
             }
+            else
+            {
+                m_stuckTimer = 0f;
+            }
+
+            // Velocity steering (Phase 5a): the capsule collider's
+            // ground friction plus linear damping swamps any push force
+            // a mass-1.5 body can apply (the old 5 N AddForce produced
+            // ~0 m/s), so the horizontal velocity is driven directly
+            // toward the walk pace. linearVelocity.y is left untouched
+            // for gravity, collisions and hang-time.
+            Vector3 steered = NpcWander.SteerHorizontal(
+                horizVel, dir * m_wanderSpeed, m_wanderAccel, dt);
+            m_rb.linearVelocity = new Vector3(steered.x, velocity.y, steered.z);
+            m_isWalking = true;
+
+            // Facing: turn toward the travel direction by yaw only —
+            // +z forward faces the target (NpcBodyBuilder's layout).
+            // Torque about world up, not MoveRotation: MoveRotation
+            // would teleport a dynamic body and fight collisions. The
+            // P control adds the righting damping's yaw bite back
+            // (ApplySelfRighting subtracts angularVelocity * damping;
+            // its own yaw component is ~0 for a near-upright body, so
+            // the two torques compose without fighting).
+            Vector3 flatForward = transform.forward;
+            flatForward.y = 0f;
+            if (flatForward.sqrMagnitude > 0.0001f)
+            {
+                float yawErrorDeg =
+                    Vector3.SignedAngle(flatForward, dir, Vector3.up);
+                float desiredSpinRad = Mathf.Deg2Rad * Mathf.Clamp(
+                    yawErrorDeg * m_turnProportional,
+                    -m_turnSpeedDeg, m_turnSpeedDeg);
+                float spinError = desiredSpinRad
+                    + m_uprightDampingWander
+                      * Vector3.Dot(m_rb.angularVelocity, Vector3.up);
+                m_rb.AddTorque(Vector3.up * (spinError * m_rb.mass),
+                    ForceMode.Force);
+            }
+        }
+
+        /// <summary>
+        /// Drives the horizontal velocity toward desiredHorizontal via
+        /// the shared pure helper; linearVelocity.y stays untouched.
+        /// </summary>
+        private void SteerWander(Vector3 desiredHorizontal, float dt)
+        {
+            Vector3 velocity = m_rb.linearVelocity;
+            Vector3 steered = NpcWander.SteerHorizontal(
+                new Vector3(velocity.x, 0f, velocity.z), desiredHorizontal,
+                m_wanderAccel, dt);
+            m_rb.linearVelocity = new Vector3(steered.x, velocity.y, steered.z);
         }
 
         private Vector3 RandomWanderPoint()
         {
-            Vector3 point;
+            Vector3 point = Vector3.zero;
             int attempts = 0;
             do
             {
@@ -825,9 +1006,27 @@ namespace WhackySlappy.NPC
             return point;
         }
 
+        /// <summary>
+        /// A wander target must sit on the platform, at least
+        /// m_wanderMinTargetDistance from where the NPC stands, and away
+        /// from Environment props: tree trunks (2.2 m cylinders) and
+        /// rocks are Environment colliders, so the probe is a 1.2 m
+        /// radius sphere centred 1.5 m up (its bottom at 0.3 m stays
+        /// clear of the floor collider — GameBootstrap.CreateFloor puts a
+        /// unit cube centred at y -0.5, top at y 0 — while clipping
+        /// every prop; 1.2 m is the ~1.5 m specced stand-off).
+        /// </summary>
         private bool IsValidWanderPoint(Vector3 point)
         {
-            return point.y >= -0.5f; // Ensure it's on the platform.
+            Vector3 flat = point - transform.position;
+            flat.y = 0f;
+            if (flat.magnitude < m_wanderMinTargetDistance)
+                return false;
+            if (Mathf.Abs(point.x) > m_platformHalfSize
+                || Mathf.Abs(point.z) > m_platformHalfSize)
+                return false; // Ensure it's on the platform.
+            return !Physics.CheckSphere(
+                point + Vector3.up * 1.5f, 1.2f, GameLayers.MaskEnvironment);
         }
 
         // -------------------------------------------------------------------------
@@ -929,6 +1128,12 @@ namespace WhackySlappy.NPC
                 {
                     m_state = State.Wander;
                     m_settleTimer = 0f;
+                    // Phase 5a: start the steering clean; a fresh target
+                    // is picked on the first UpdateWander tick.
+                    m_hasWanderTarget = false;
+                    m_idleTimer = 0f;
+                    m_stuckTimer = 0f;
+                    m_isWalking = false;
                 }
             }
         }
@@ -1021,6 +1226,12 @@ namespace WhackySlappy.NPC
             m_sweepCooldownTimer = 0f;
             m_knockdownTimer = 0f;
             m_despawned = false;
+            // Phase 5a: clear the wander steering state so a recycled
+            // NPC picks a fresh target instead of inheriting a pause.
+            m_hasWanderTarget = false;
+            m_idleTimer = 0f;
+            m_stuckTimer = 0f;
+            m_isWalking = false;
             // Phase 2b: a recycled NPC must not inherit a dead flag or
             // missing health.
             m_isDead = false;
