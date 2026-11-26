@@ -52,6 +52,7 @@ namespace WhackySlappy.Core
             ApplyFloorLook(arenaRoot);
             CreateGroundPlane(arenaRoot);
             CreatePathBorder(arenaRoot);
+            GrassTufts.Build(arenaRoot, GraphicsQuality.Level);
             ParkHorizon.Build(arenaRoot);
         }
 
