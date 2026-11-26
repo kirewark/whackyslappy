@@ -31,10 +31,17 @@ namespace WhackySlappy.NPC
         [SerializeField] private float m_uprightDampingGettingUp = 3.0f;
 
         /// <summary>Speed threshold (m/s) considered "settled" for state transitions.</summary>
-        [SerializeField] private float m_settleSpeed = 0.3f;
+        [SerializeField] private float m_settleSpeed = 0.5f;
 
         /// <summary>Time (s) the NPC must stay below settleSpeed before GettingUp.</summary>
         [SerializeField] private float m_settleTime = 0.4f;
+
+        /// <summary>Safety cap (s) on time spent in Tumbling. A slowly rocking
+        /// NPC can keep its speed just above settleSpeed forever, so the
+        /// settle timer never fills and the NPC lies on the ground (Tumbling
+        /// applies no righting torque). Past this long the GettingUp
+        /// transition is forced. Never cuts the sweep knockdown window short.</summary>
+        [SerializeField] private float m_maxTumbleTime = 3.5f;
 
         /// <summary>Cooldown (s) after a hit during which the NPC ignores new hits.</summary>
         [SerializeField] private float m_hitCooldown = 0.1f;
@@ -149,6 +156,8 @@ namespace WhackySlappy.NPC
         private Rigidbody m_rb;
         private NpcSpawner m_spawner;
         private float m_settleTimer = 0f;
+        // Counts up while in Tumbling; forces GettingUp past m_maxTumbleTime.
+        private float m_tumbleTimer = 0f;
         private float m_hitCooldownTimer = 0f;
         private float m_sweepCooldownTimer = 0f;
         // Knockdown window: > 0 while a swept NPC must stay on the ground
@@ -543,6 +552,7 @@ namespace WhackySlappy.NPC
             m_state = State.Tumbling;
             m_hitCooldownTimer = m_hitCooldown;
             m_settleTimer = 0f;
+            m_tumbleTimer = 0f;
         }
 
         /// <summary>
@@ -645,6 +655,7 @@ namespace WhackySlappy.NPC
             m_sweepCooldownTimer = m_sweepCooldown;
             m_state = State.Tumbling;
             m_settleTimer = 0f;
+            m_tumbleTimer = 0f;
 
             // Knockdown window: re-sweeping a downed NPC just refreshes the
             // timer, so it stays held down for m_knockdownTime from the last
@@ -763,6 +774,7 @@ namespace WhackySlappy.NPC
             {
                 m_state = State.Tumbling;
                 m_settleTimer = 0f;
+                m_tumbleTimer = 0f;
                 return; // no wander push while fallen
             }
 
@@ -863,22 +875,44 @@ namespace WhackySlappy.NPC
                 return;
             }
 
+            // Max-tumble safety: a slowly rocking NPC can hold its speed just
+            // above settleSpeed forever, so the settle timer below never
+            // fills and the body would lie flat (Tumbling applies no righting
+            // torque). Cap the Tumbling time and force the same GettingUp
+            // transition the settle path performs. The knockdown countdown
+            // returned above, so it is never cut short, and the m_isDead
+            // check keeps a dead NPC passive.
+            m_tumbleTimer += Time.fixedDeltaTime;
+            if (!m_isDead && m_tumbleTimer > m_maxTumbleTime)
+            {
+                EnterGettingUp();
+                return;
+            }
+
             if (m_rb.linearVelocity.magnitude < m_settleSpeed)
             {
                 m_settleTimer += Time.fixedDeltaTime;
                 if (m_settleTimer >= m_settleTime)
-                {
-                    m_state = State.GettingUp;
-                    m_settleTimer = 0f;
-                    // The recovery animation plays with a strained face.
-                    if (m_face != null)
-                        m_face.SetExpression(NpcFace.Expression.Recover, 1.5f);
-                }
+                    EnterGettingUp();
             }
             else
             {
                 m_settleTimer = 0f;
             }
+        }
+
+        /// <summary>
+        /// Shared Tumbling -> GettingUp transition, used by the normal
+        /// settle path and by the m_maxTumbleTime safety above.
+        /// </summary>
+        private void EnterGettingUp()
+        {
+            m_state = State.GettingUp;
+            m_settleTimer = 0f;
+            m_tumbleTimer = 0f;
+            // The recovery animation plays with a strained face.
+            if (m_face != null)
+                m_face.SetExpression(NpcFace.Expression.Recover, 1.5f);
         }
 
         /// <summary>
@@ -928,9 +962,10 @@ namespace WhackySlappy.NPC
             m_isDead = true;
             m_state = State.Dead;
             // End the silly hang-time window so kill gravity pulls the body
-            // straight down; the knockdown/settle timers no longer matter
-            // because the Dead state skips every transition check.
+            // straight down; the knockdown/settle/tumble timers no longer
+            // matter because the Dead state skips every transition check.
             m_hangTimer = 0f;
+            m_tumbleTimer = 0f;
 
             // NpcFace has no dead expression: Dizzy wins, with a
             // PositiveInfinity duration that never counts below zero in its
@@ -981,6 +1016,7 @@ namespace WhackySlappy.NPC
         {
             m_state = State.Wander;
             m_settleTimer = 0f;
+            m_tumbleTimer = 0f;
             m_hitCooldownTimer = 0f;
             m_sweepCooldownTimer = 0f;
             m_knockdownTimer = 0f;

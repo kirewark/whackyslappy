@@ -10,7 +10,7 @@ namespace WhackySlappy.Core
     /// </summary>
     public static class GameBootstrap
     {
-        public const float FloorSize = 60f;
+        public const float FloorSize = 40f;
         public const float FloorHalf = FloorSize * 0.5f;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -58,7 +58,7 @@ namespace WhackySlappy.Core
         }
 
         /// <summary>
-        /// Creates a FloorSize x FloorSize (60 x 60 m) floor at y=0.
+        /// Creates a FloorSize x FloorSize (40 x 40 m) floor at y=0.
         /// </summary>
         private static void CreateFloor(GameObject parent)
         {
