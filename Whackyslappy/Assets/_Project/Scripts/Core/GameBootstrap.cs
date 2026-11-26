@@ -10,7 +10,8 @@ namespace WhackySlappy.Core
     /// </summary>
     public static class GameBootstrap
     {
-        private const float FloorSize = 20f;
+        public const float FloorSize = 60f;
+        public const float FloorHalf = FloorSize * 0.5f;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         public static void BuildArena()
@@ -57,7 +58,7 @@ namespace WhackySlappy.Core
         }
 
         /// <summary>
-        /// Creates a 20x20 m floor at y=0.
+        /// Creates a FloorSize x FloorSize (60 x 60 m) floor at y=0.
         /// </summary>
         private static void CreateFloor(GameObject parent)
         {
@@ -68,7 +69,8 @@ namespace WhackySlappy.Core
             floorObj.transform.localScale = new Vector3(FloorSize, 1f, FloorSize);
             floorObj.transform.position = new Vector3(0, -0.5f, 0);
 
-            // Checker texture: 2x2 pixels, point filter, repeat wrap, tiled 10x10.
+            // Checker texture: 2x2 pixels, point filter, repeat wrap, tiled
+            // so one texture repeat stays 2 m no matter the floor size.
             var tex = new Texture2D(2, 2, TextureFormat.RGB24, false);
             tex.filterMode = FilterMode.Point;
             tex.wrapMode = TextureWrapMode.Repeat;
@@ -86,7 +88,9 @@ namespace WhackySlappy.Core
             if (mat != null)
             {
                 mat.mainTexture = tex;
-                mat.mainTextureScale = new Vector2(10f, 10f);
+                // FloorHalf repeats over FloorSize metres = 2 m per repeat,
+                // the same world cell size the old 20 m floor had.
+                mat.mainTextureScale = new Vector2(FloorHalf, FloorHalf);
                 renderer.material = mat;
             }
 
@@ -120,7 +124,7 @@ namespace WhackySlappy.Core
         /// </summary>
         private static void CreatePlayerBlockerWalls(GameObject parent)
         {
-            const float WallHeight = 3f;
+            const float WallHeight = 6f; // 6 m: keeps even flung slappy bodies in.
             var half = FloorSize * 0.5f;
             var wallThickness = 0.3f;
             var wallLength = FloorSize + wallThickness;

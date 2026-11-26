@@ -47,8 +47,9 @@ namespace WhackySlappy.NPC
         /// <summary>Kill height (y) below which the NPC despawns.</summary>
         [SerializeField] private float m_killHeight = -10.0f;
 
-        /// <summary>Platform half-size for wander bounds (m). Platform is 20x20 per §6.</summary>
-        [SerializeField] private float m_platformHalfSize = 10.0f;
+        /// <summary>Platform half-size for wander bounds (m). Reads the
+        /// shared GameBootstrap arena constant.</summary>
+        [SerializeField] private float m_platformHalfSize = GameBootstrap.FloorHalf;
 
         /// <summary>Margin (m) from platform edge for safe wander points.</summary>
         [SerializeField] private float m_wanderMargin = 1.5f;

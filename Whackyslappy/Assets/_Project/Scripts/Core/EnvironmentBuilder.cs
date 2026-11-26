@@ -120,7 +120,9 @@ namespace WhackySlappy.Core
             // primitive material is never modified (repo material pattern).
             Material floorMat = floorRenderer.material;
             floorMat.mainTexture = MakeCheckerTexture();
-            floorMat.mainTextureScale = new Vector2(10f, 10f);
+            // FloorHalf repeats over the FloorSize-metre floor, so each
+            // checker cell keeps the same ~1 m world size on any arena size.
+            floorMat.mainTextureScale = new Vector2(GameBootstrap.FloorHalf, GameBootstrap.FloorHalf);
         }
 
         /// <summary>
