@@ -147,6 +147,11 @@ namespace WhackySlappy.Core
                     // edge strips stay on screen whatever the CI viewport.
                     // Normal spawning continues untouched.
                     SetFixedCamera(new Vector3(0f, GameBootstrap.FloorSize + 5f, 0f), Quaternion.Euler(90f, 0f, 0f));
+                    // At FloorSize + 5 m (~65 m) the camera sits far past
+                    // the linear fog start (25 m) and the shot washes out;
+                    // fog is global (RenderSettings.fog), off for this
+                    // throwaway WebGL photo session, never restored.
+                    RenderSettings.fog = false;
                 }
                 else if (m_shot == "slap")
                 {
@@ -187,11 +192,6 @@ namespace WhackySlappy.Core
                 var camGo = new GameObject("PhotoModeCamera");
                 Camera cam = camGo.AddComponent<Camera>();
                 cam.depth = 100f;
-                // The overview camera is high enough that the arena's linear
-                // fog (start 25 m) would wash out the whole shot; photo
-                // cameras render clear of fog (slap/getup sit inside the
-                // fog start distance, so their look does not change).
-                cam.fog = false;
                 camGo.transform.SetPositionAndRotation(position, rotation);
             }
 
