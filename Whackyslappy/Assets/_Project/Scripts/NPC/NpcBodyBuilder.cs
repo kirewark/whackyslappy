@@ -28,9 +28,13 @@ namespace WhackySlappy.NPC
         // the upper legs into the rounded torso bottom (cross-section
         // radius about 0.245 at y = 0.1, so no gap) while their outer edge
         // at 0.38 sits outside the torso silhouette; below y = 0 the legs
-        // are fully exposed.
-        private const float ShoulderX = 0.45f;
-        private const float ShoulderY = 0.45f;
+        // are fully exposed. Shoulders at y = 0.8 sit near the top of the
+        // torso; at x = 0.42 the upper arm (radius 0.09, inner edge 0.33)
+        // just clears the rounded torso top (cross-section radius about
+        // 0.245 at y = 0.8), and with ArmLength 0.45 and Overlap 0.1 the
+        // hands end around y = -0.1, well above the feet.
+        private const float ShoulderX = 0.42f;
+        private const float ShoulderY = 0.8f;
         private const float HipX = 0.25f;
         private const float HipY = 0.1f;
 
