@@ -137,7 +137,11 @@ namespace WhackySlappy.NPC
         {
             Wander,
             Tumbling,
-            GettingUp
+            GettingUp,
+            // Death: the body stays down as a passive ragdoll. Wander
+            // forces, self-righting torque and the GettingUp transition
+            // are all skipped; only gravity and collisions keep acting.
+            Dead
         }
 
         private State m_state = State.Wander;
@@ -208,6 +212,13 @@ namespace WhackySlappy.NPC
         // Re-entry guard for Despawn: Tumbling exit and CheckDespawn can both
         // fire in one tick, which would double-notify the spawner.
         private bool m_despawned = false;
+
+        // Health and death (Phase 2b): starts at NpcDamage.MaxHealth and
+        // drops per accepted slap; 0 means dead. m_isDead doubles as the
+        // Die() re-entry guard and the gate that turns every later OnHit
+        // into a no-op.
+        private float m_health = NpcDamage.MaxHealth;
+        private bool m_isDead = false;
 
         // Cached player transform: found once, reused every physics tick
         // instead of FindAnyObjectByType per tick. Unity's null check
@@ -452,6 +463,15 @@ namespace WhackySlappy.NPC
                     ApplySelfRighting(m_uprightStrength, m_uprightDampingGettingUp);
                     CheckTransitionToWander();
                     break;
+
+                case State.Dead:
+                    // Passive ragdoll: gravity and collisions keep acting,
+                    // and the unconditional CheckDespawn above still
+                    // recycles a corpse that slides off the platform, but
+                    // there is no wander push, no self-righting torque and
+                    // no transition check — the body stays exactly where
+                    // the killing slap left it.
+                    break;
             }
         }
 
@@ -498,6 +518,15 @@ namespace WhackySlappy.NPC
         /// <summary>Rigidbody speed (m/s); 0 before the body is cached.</summary>
         public float Speed => m_rb != null ? m_rb.linearVelocity.magnitude : 0f;
 
+        /// <summary>Current health (NpcDamage.MaxHealth when fresh, 0 once dead).</summary>
+        public float Health => m_health;
+
+        /// <summary>True once this NPC has died and stays down as a ragdoll.</summary>
+        public bool IsDead => m_isDead;
+
+        /// <summary>Raised exactly once when this NPC's health reaches 0.</summary>
+        public event System.Action<NpcController> Died;
+
         /// <summary>
         /// Called by the slap system when this NPC is hit.
         /// Applies impulse and switches to Tumbling state.
@@ -524,6 +553,10 @@ namespace WhackySlappy.NPC
         /// </summary>
         void ISlappable.OnHit(in SlapHitInfo hit)
         {
+            // Dead NPCs ignore every further hit: the corpse is scenery.
+            if (m_isDead)
+                return;
+
             if (hit.Kind == SlapKind.Sweep)
             {
                 // Sweeps respect the slap hit-cooldown AND their own short
@@ -551,6 +584,15 @@ namespace WhackySlappy.NPC
                     // explicit null check, never ?..
                     if (m_face != null)
                         m_face.SetExpression(NpcFace.Expression.Hit, 0.8f);
+
+                    // Health (Phase 2b): an accepted slap subtracts
+                    // NpcDamage damage; a sweep never reaches this branch,
+                    // and Compute returns 0 for any non-slap kind anyway.
+                    // Zero health kills the NPC in place.
+                    m_health = NpcDamage.Apply(m_health,
+                        NpcDamage.Compute(hit.Kind, hit.Strength));
+                    if (NpcDamage.IsDead(m_health))
+                        Die();
                 }
             }
         }
@@ -871,6 +913,47 @@ namespace WhackySlappy.NPC
         // Despawn / respawn
         // -------------------------------------------------------------------------
 
+        /// <summary>
+        /// Kill the NPC in place (Phase 2b): it stays down as a passive
+        /// ragdoll until the kill-height path in CheckDespawn or the
+        /// spawner's corpse cap eventually destroys it. Idempotent —
+        /// later hits never even reach it because OnHit early-outs once
+        /// the NPC is dead.
+        /// </summary>
+        private void Die()
+        {
+            if (m_isDead)
+                return;
+            m_isDead = true;
+            m_state = State.Dead;
+            // End the silly hang-time window so kill gravity pulls the body
+            // straight down; the knockdown/settle timers no longer matter
+            // because the Dead state skips every transition check.
+            m_hangTimer = 0f;
+
+            // NpcFace has no dead expression: Dizzy wins, with a
+            // PositiveInfinity duration that never counts below zero in its
+            // return-to-Idle countdown. m_face is a MonoBehaviour: explicit
+            // null check, never ?..
+            if (m_face != null)
+                m_face.SetExpression(NpcFace.Expression.Dizzy, float.PositiveInfinity);
+
+            // The killing slap already yelped in OnHit's accepted branch;
+            // no second sound here (keeping it simple).
+
+            // Announce the death, then tell the spawner this NPC no longer
+            // counts as alive and hand the corpse to its cap. Do NOT
+            // Destroy here and do NOT set m_despawned: a body that later
+            // slides below m_killHeight must still go through Despawn(),
+            // and the spawner's m_alive set dedupes that NotifyDespawn.
+            Died?.Invoke(this);
+            if (m_spawner != null)
+            {
+                m_spawner.NotifyDespawn(this);
+                m_spawner.RegisterCorpse(this);
+            }
+        }
+
         private void Despawn()
         {
             if (m_despawned)
@@ -901,6 +984,10 @@ namespace WhackySlappy.NPC
             m_sweepCooldownTimer = 0f;
             m_knockdownTimer = 0f;
             m_despawned = false;
+            // Phase 2b: a recycled NPC must not inherit a dead flag or
+            // missing health.
+            m_isDead = false;
+            m_health = NpcDamage.MaxHealth;
             m_rb.linearVelocity = Vector3.zero;
             m_rb.angularVelocity = Vector3.zero;
             transform.rotation = Quaternion.identity;
