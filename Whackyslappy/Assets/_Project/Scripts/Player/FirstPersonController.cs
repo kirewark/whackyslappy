@@ -18,6 +18,7 @@ namespace WhackySlappy.Player
         [SerializeField] private float m_gravity = -20f;
         [SerializeField] private float m_mouseSensitivity = 0.1f;
         [SerializeField] private float m_pitchClamp = 85f;
+        [SerializeField] private float m_slapHeldLookScale = 0.5f;
 
         private PlayerInputReader m_inputReader;
         private CharacterController m_controller;
@@ -41,9 +42,10 @@ namespace WhackySlappy.Player
         public float Pitch => m_pitch;
 
         /// <summary>
-        /// When true, mouse look input is ignored (movement is unaffected).
+        /// When true, mouse look input is scaled by m_slapHeldLookScale
+        /// instead of applied at full speed (movement is unaffected).
         /// The directional slap sets this while the left mouse button is held
-        /// so the drag feeds the aim vector instead of turning the camera.
+        /// so the drag feeds the aim vector while the view still drifts slowly.
         /// </summary>
         public bool LookSuppressed { get; set; }
 
@@ -111,25 +113,25 @@ namespace WhackySlappy.Player
             if (Cursor.lockState != CursorLockMode.Locked)
                 return;
 
-            // While a slap aim drag is in progress, the mouse delta belongs
-            // to the aim vector, not the camera. Skip applying look input.
-            if (LookSuppressed)
-                return;
-
             // On the frame the slap button is first pressed, the mouse delta
             // of that frame must not turn the camera.
             if (m_inputReader.SlapPressed)
                 return;
+
+            // While a slap aim hold is in progress the mouse delta also feeds
+            // the aim vector; slow look instead of freezing it so the view
+            // drifts with the drag and does not jump when the hold ends.
+            float lookScale = LookSuppressed ? m_slapHeldLookScale : 1f;
 
             var look = m_inputReader.Look;
             if (look == Vector2.zero)
                 return;
 
             // Yaw: rotate player body around local Y.
-            transform.Rotate(0f, look.x * m_mouseSensitivity, 0f);
+            transform.Rotate(0f, look.x * m_mouseSensitivity * lookScale, 0f);
 
             // Pitch: clamp and apply to camera pivot.
-            m_pitch = Mathf.Clamp(m_pitch - look.y * m_mouseSensitivity, -m_pitchClamp, m_pitchClamp);
+            m_pitch = Mathf.Clamp(m_pitch - look.y * m_mouseSensitivity * lookScale, -m_pitchClamp, m_pitchClamp);
             if (CameraPivot != null)
                 CameraPivot.localEulerAngles = new Vector3(m_pitch, 0f, 0f);
         }
