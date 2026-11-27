@@ -206,6 +206,10 @@ namespace WhackySlappy.Core
             // Set CameraPivot BEFORE AddComponent runs Awake (which reads it).
             fps.CameraPivot = cameraRig.transform;
 
+            // Player-side NPC-strike feedback (camera bump + whoosh) lives
+            // on the rig so GetComponentInParent finds the controller.
+            cameraRig.AddComponent<StrikeFeedback>();
+
             // Use the existing Main Camera if it has the MainCamera tag;
             // otherwise create a new one.
             var camera = Camera.main;

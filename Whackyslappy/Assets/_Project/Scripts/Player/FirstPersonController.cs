@@ -19,11 +19,20 @@ namespace WhackySlappy.Player
         [SerializeField] private float m_mouseSensitivity = 0.1f;
         [SerializeField] private float m_pitchClamp = 85f;
         [SerializeField] private float m_slapHeldLookScale = 0.5f;
+        [SerializeField] private float m_bumpMaxDeg = 5f;
 
         private PlayerInputReader m_inputReader;
         private CharacterController m_controller;
         private float m_verticalVelocity;
         private float m_pitch;
+
+        // Additive camera-bump state (NPC strike feedback); never touches
+        // m_pitch itself, so mouse-look keeps working during the kick.
+        private float m_bumpPitch;
+        private float m_bumpRoll;
+        private float m_bumpDuration = 0.12f;
+        private float m_bumpElapsed;
+        private bool m_bumpActive;
 
         /// <summary>
         /// The camera pivot transform to rotate for pitch. Set by GameBootstrap.
@@ -134,6 +143,53 @@ namespace WhackySlappy.Player
             m_pitch = Mathf.Clamp(m_pitch - look.y * m_mouseSensitivity * lookScale, -m_pitchClamp, m_pitchClamp);
             if (CameraPivot != null)
                 CameraPivot.localEulerAngles = new Vector3(m_pitch, 0f, 0f);
+        }
+
+        /// <summary>
+        /// Queue a short decaying pitch/roll kick on the camera pivot, used
+        /// for player-side NPC-strike feedback (StrikeFeedback). The offset
+        /// is added on top of m_pitch in LateUpdate and decays to zero, so
+        /// the stored pitch/yaw are never mutated and mouse-look continues
+        /// to work normally during and after the bump. Re-triggers add up
+        /// but are clamped to m_bumpMaxDeg per axis.
+        /// </summary>
+        /// <param name="pitchDeg">Signed pitch offset in degrees (positive = up).</param>
+        /// <param name="rollDeg">Signed roll offset in degrees.</param>
+        /// <param name="duration">Decay duration in seconds; defaults to 0.12 s if not positive.</param>
+        public void AddCameraBump(float pitchDeg, float rollDeg, float duration = 0.12f)
+        {
+            if (duration <= 0f)
+                duration = 0.12f;
+            m_bumpPitch = Mathf.Clamp(m_bumpPitch + pitchDeg, -m_bumpMaxDeg, m_bumpMaxDeg);
+            m_bumpRoll = Mathf.Clamp(m_bumpRoll + rollDeg, -m_bumpMaxDeg, m_bumpMaxDeg);
+            m_bumpDuration = duration;
+            m_bumpElapsed = 0f;
+            m_bumpActive = true;
+        }
+
+        private void LateUpdate()
+        {
+            if (!m_bumpActive)
+                return;
+
+            m_bumpElapsed += Time.unscaledDeltaTime;
+            float t = Mathf.Clamp01(m_bumpElapsed / m_bumpDuration);
+
+            // Quadratic ease-out; at t=1 the offsets are zeroed and the
+            // component stops writing the pivot until the next bump.
+            float decay = 1f - t * t;
+            float pitchKick = m_bumpPitch * decay;
+            float rollKick = m_bumpRoll * decay;
+
+            if (CameraPivot != null)
+                CameraPivot.localEulerAngles = new Vector3(m_pitch + pitchKick, 0f, rollKick);
+
+            if (t >= 1f)
+            {
+                m_bumpActive = false;
+                m_bumpPitch = 0f;
+                m_bumpRoll = 0f;
+            }
         }
     }
 }

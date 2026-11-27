@@ -63,14 +63,17 @@ namespace WhackySlappy.NPC
         [SerializeField] private float m_chaseSpeed = 2.4f;
         [SerializeField] private float m_attackRange = 1.6f;
 
-        /// <summary>Phase 6 strike telegraph torques, applied with
-        /// AddTorque(ForceMode.Force) to the 0.15 kg right upper-arm ragdoll
-        /// limb only: Windup raises it forward about the NPC's local right
-        /// axis (scaled by phase progress), Swing drives it down with the
-        /// opposite torque. Nothing reaches the player: no forces on it, no
-        /// collider changes, no damage — the strike is telegraph + timing.</summary>
-        [SerializeField] private float m_strikeRaiseTorque = 1.5f;
-        [SerializeField] private float m_strikeSwingTorque = 3f;
+        /// <summary>Phase 6 strike telegraph angular accelerations
+        /// (rad/s^2, AddTorque with ForceMode.Acceleration — mass
+        /// independent) on both right arm ragdoll limbs (forearm at half
+        /// strength): Windup raises them forward/up about the joint swing
+        /// axis (limb-local right; negative pitches the hanging limb
+        /// forward, toward the faced player), scaled by phase progress
+        /// floored at 0.4 so the lift starts at once; Swing snaps them
+        /// back down. Nothing reaches the player: no forces on it, no
+        /// collider changes, no damage — the strike is telegraph only.</summary>
+        [SerializeField] private float m_strikeRaiseAccel = 60f;
+        [SerializeField] private float m_strikeSwingAccel = 120f;
 
         /// <summary>Max yaw rate (deg/s) the facing controller turns the
         /// NPC toward its travel direction, and the P gain (1/s) turning
@@ -241,6 +244,7 @@ namespace WhackySlappy.NPC
         // Lazily cached Rigidbody of the limb NpcBodyBuilder names
         // "Arm_R_Upper" (jointed ragdoll child of the NPC root).
         private Rigidbody m_rightUpperArmRb;
+        private Rigidbody m_rightLowerArmRb;
 
         /// <summary>Angle (deg) the chase heading swings around a blocked
         /// forward prop raycast and how long the detour holds; the probe
@@ -333,6 +337,14 @@ namespace WhackySlappy.NPC
                     s_playerTransform = cc.transform;
             }
             return s_playerTransform;
+        }
+
+        // Statics must not leak across play sessions when the editor skips
+        // domain reload (same pattern as SlapAudio / SillyPhysics).
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticState()
+        {
+            AnyStrikeLanded = null;
         }
 
         // -------------------------------------------------------------------------
@@ -666,6 +678,12 @@ namespace WhackySlappy.NPC
         /// or touch the player — later player-side feedback, e.g. a dodge
         /// prompt, subscribes to this instead of polling).</summary>
         public event System.Action<NpcController> StrikeLanded;
+
+        /// <summary>Static mirror of StrikeLanded, fired for every NPC, so
+        /// one global listener (StrikeFeedback) covers all NPCs and NPC
+        /// recycling can never cause double subscriptions. Cleared at the
+        /// start of each play session by ResetStaticState.</summary>
+        public static event System.Action<NpcController> AnyStrikeLanded;
 
         /// <summary>Current strike timing phase (read-only; surfaced in the
         /// WebGL photo telemetry next to the aggro flag).</summary>
@@ -1142,37 +1160,68 @@ namespace WhackySlappy.NPC
 
         /// <summary>Phase 6 strike tick (called only from UpdateWander's
         /// FixedUpdate path while m_aggro): advances the pure NpcStrike
-        /// timer machine (windup, swing, 2 s cooldown) and telegraphs it on
-        /// the ragdoll right upper-arm limb. inRange pads m_attackRange by
-        /// 0.2 m so the windup starts while the NPC settles against the
-        /// brake distance. Torque acts on the arm limb ONLY — never on the
-        /// root body, the player, colliders or triggers; no damage. Fires
+        /// timer machine (windup, swing, 2 s cooldown) and telegraphs it
+        /// on the right upper-arm AND forearm limbs. inRange pads
+        /// m_attackRange by 0.4 m. Facing is not re-applied here:
+        /// ChasePlayer already calls ApplyFacingTorque(flatDir) on every
+        /// aggro tick before this, so the windup always faces the
+        /// player. Torque acts on the arm limbs ONLY — never the root,
+        /// the player, colliders or triggers; no damage. Fires
         /// StrikeLanded exactly once, on the tick Swing begins.</summary>
         private void TickStrike(float flatDistance, float dt)
         {
             bool landed = m_strike.Tick(
-                dt, flatDistance <= m_attackRange + 0.2f);
+                dt, flatDistance <= m_attackRange + 0.4f);
 
             if (m_strike.Phase == NpcStrikePhase.Windup
                 || m_strike.Phase == NpcStrikePhase.Swing)
             {
-                Rigidbody arm = GetRightUpperArmRb();
-                if (arm != null)
+                Rigidbody upper = GetRightUpperArmRb();
+                if (upper != null)
                 {
-                    // Rotation about the NPC's local right axis: negative
-                    // pitches the hanging arm forward/up into the windup,
-                    // positive (opposite) swings it back down. Both scale
-                    // with phase progress; ForceMode.Force keeps the tiny
-                    // 0.15 kg limb's acceleration bounded.
+                    // Real hinge axis: AddJoint sets the arm joint's
+                    // swingAxis to limb-local right, so each limb is
+                    // driven about its own transform.right. Negative
+                    // pitches a hanging limb forward/up toward the faced
+                    // player; positive snaps it back down. Acceleration
+                    // mode ignores mass and inertia so the 0.15 kg limb
+                    // reliably spins visibly; the 0.4 progress floor
+                    // starts the lift at once. Forearm gets half power.
+                    float progress =
+                        Mathf.Max(0.4f, m_strike.PhaseProgress);
                     float k = m_strike.Phase == NpcStrikePhase.Windup
-                        ? -m_strikeRaiseTorque * m_strike.PhaseProgress
-                        : m_strikeSwingTorque * m_strike.PhaseProgress;
-                    arm.AddTorque(transform.right * k, ForceMode.Force);
+                        ? -m_strikeRaiseAccel * progress
+                        : m_strikeSwingAccel * progress;
+                    upper.AddTorque(
+                        upper.transform.right * k,
+                        ForceMode.Acceleration);
+                    Rigidbody lower = GetRightLowerArmRb();
+                    if (lower != null)
+                        lower.AddTorque(
+                            lower.transform.right * (k * 0.5f),
+                            ForceMode.Acceleration);
                 }
             }
 
             if (landed)
+            {
                 StrikeLanded?.Invoke(this);
+                AnyStrikeLanded?.Invoke(this);
+            }
+        }
+
+        /// <summary>Lazily caches the Rigidbody of the "Arm_R_Lower" limb
+        /// that NpcBodyBuilder.AddLimbs builds under the NPC root (same
+        /// null-safe lookup as the upper arm).</summary>
+        private Rigidbody GetRightLowerArmRb()
+        {
+            if (m_rightLowerArmRb == null)
+            {
+                Transform arm = transform.Find("Arm_R_Lower");
+                if (arm != null)
+                    m_rightLowerArmRb = arm.GetComponent<Rigidbody>();
+            }
+            return m_rightLowerArmRb;
         }
 
         /// <summary>Lazily caches the Rigidbody of the "Arm_R_Upper" limb
