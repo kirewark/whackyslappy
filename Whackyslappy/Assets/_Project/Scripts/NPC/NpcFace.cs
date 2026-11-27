@@ -5,13 +5,13 @@ namespace WhackySlappy.NPC
 {
     /// <summary>
     /// Silly reactive cartoon face for the NPC head: white eyes with pupils,
-    /// brow bars, a mouth and a tongue. Expressions (Idle, Hit, Dizzy, Recover)
+    /// brow bars, a mouth and a tongue. Expressions (Idle, Angry, Recover, Hurt, Hit, Dizzy, Dead)
     /// are made by lerping face-part transforms toward per-expression targets.
     /// Built once by Build(); the head itself is never rescaled.
     /// </summary>
     public class NpcFace : MonoBehaviour
     {
-        public enum Expression { Idle, Hit, Dizzy, Recover }
+        public enum Expression { Idle, Angry, Recover, Hurt, Hit, Dizzy, Dead }
 
         [Header("Tuning")]
         [SerializeField] private float m_lerpSpeed = 12f;
@@ -19,6 +19,7 @@ namespace WhackySlappy.NPC
         [SerializeField] private float m_blinkMinDelay = 2f;     // Idle blink, seconds
         [SerializeField] private float m_blinkMaxDelay = 5f;
         [SerializeField] private float m_blinkDuration = 0.12f;
+        [SerializeField] private float m_hurtDuration = 0.6f;    // Hurt flinch, seconds
 
         // Part transforms (cached once, never fetched in Update).
         private Transform m_leftEye, m_rightEye;
@@ -116,10 +117,16 @@ namespace WhackySlappy.NPC
         }
 
         /// <summary>
-        /// Requests an expression. After duration seconds the face returns to Idle.
+        /// Requests an expression; a live one only yields to a higher enum
+        /// value (Idle < Angry < Recover < Hurt < Hit < Dizzy < Dead; Idle
+        /// may replace Angry). Lapsed Hit chains to Hurt; Dead is final.
         /// </summary>
         public void SetExpression(Expression e, float duration)
         {
+            if ((int)e < (int)m_expression &&
+                !(e == Expression.Idle && m_expression == Expression.Angry))
+                return;
+
             m_expression = e;
             m_returnTimer = Mathf.Max(0f, duration);
             if (e == Expression.Dizzy)
@@ -170,12 +177,17 @@ namespace WhackySlappy.NPC
 
             float dt = Time.deltaTime;
 
-            // Auto-return to Idle when the requested duration has passed.
+            // Auto-return: a lapsed slap face settles into a short Hurt
+            // flinch before Idle; chase re-asserts Angry next tick.
             if (m_returnTimer > 0f)
             {
                 m_returnTimer -= dt;
                 if (m_returnTimer <= 0f)
-                    m_expression = Expression.Idle;
+                {
+                    bool wasHit = m_expression == Expression.Hit;
+                    m_expression = wasHit ? Expression.Hurt : Expression.Idle;
+                    m_returnTimer = wasHit ? m_hurtDuration : 0f;
+                }
             }
 
             // Idle blink timer.
@@ -214,13 +226,22 @@ namespace WhackySlappy.NPC
                 case Expression.Recover:
                     SetRecoverTargets();
                     break;
+                case Expression.Angry:
+                    SetAngryTargets();
+                    break;
+                case Expression.Hurt:
+                    SetHurtTargets();
+                    break;
+                case Expression.Dead:
+                    SetDeadTargets();
+                    break;
                 default:
                     SetIdleTargets(blinkY);
                     break;
             }
 
-            // Tongue shows on Hit and Dizzy only. Toggle once per change.
-            bool showTongue = m_expression == Expression.Hit || m_expression == Expression.Dizzy;
+            // Tongue shows from Hit upward (Hit, Dizzy, Dead). Toggle once.
+            bool showTongue = (int)m_expression >= (int)Expression.Hit;
             if (m_tongue.gameObject.activeSelf != showTongue)
                 m_tongue.gameObject.SetActive(showTongue);
 
@@ -317,6 +338,53 @@ namespace WhackySlappy.NPC
                 MouthBaseScale.x * 0.7f,
                 MouthBaseScale.y * 0.6f,
                 MouthBaseScale.z);
+        }
+
+        private void SetAngryTargets()
+        {
+            SetIdleTargets(1f);
+            m_leftEyeScaleT.y *= 0.75f;
+            m_rightEyeScaleT.y *= 0.75f;
+            m_leftBrowPosT = LeftBrowPos + new Vector3(0.015f, -0.03f, 0f);
+            m_rightBrowPosT = RightBrowPos + new Vector3(-0.015f, -0.03f, 0f);
+            m_leftBrowRotT = Quaternion.Euler(0f, 0f, -32f);
+            m_rightBrowRotT = Quaternion.Euler(0f, 0f, 32f);
+            m_mouthScaleT = new Vector3(MouthBaseScale.x * 1.25f, MouthBaseScale.y * 0.5f,
+                MouthBaseScale.z);
+        }
+
+        // Flinch: brows up-in, squinted eyes, shrunken pupils, small mouth.
+        private void SetHurtTargets()
+        {
+            SetIdleTargets(1f);
+            m_leftEyeScaleT.y *= 0.45f;
+            m_rightEyeScaleT.y *= 0.45f;
+            m_leftPupilScaleT = PupilBaseScale * 0.6f;
+            m_rightPupilScaleT = PupilBaseScale * 0.6f;
+            m_leftBrowPosT = LeftBrowPos + new Vector3(0.02f, 0.05f, 0f);
+            m_rightBrowPosT = RightBrowPos + new Vector3(-0.02f, 0.05f, 0f);
+            m_leftBrowRotT = Quaternion.Euler(0f, 0f, 18f);
+            m_rightBrowRotT = Quaternion.Euler(0f, 0f, -18f);
+            m_mouthScaleT = new Vector3(MouthBaseScale.x * 0.8f, MouthBaseScale.y * 1.6f,
+                MouthBaseScale.z);
+        }
+
+        private void SetDeadTargets()
+        {
+            SetIdleTargets(1f);
+            m_leftEyeScaleT.y *= 0.15f;
+            m_rightEyeScaleT.y *= 0.15f;
+            m_leftPupilScaleT = PupilBaseScale * 0.35f;
+            m_rightPupilScaleT = PupilBaseScale * 0.35f;
+            m_mouthScaleT = new Vector3(MouthBaseScale.x * 0.9f, MouthBaseScale.y * 2.6f,
+                MouthBaseScale.z);
+        }
+
+        /// <summary>Back to Idle; clears a final Dead face for a recycle.</summary>
+        public void ResetToIdle()
+        {
+            m_expression = Expression.Idle;
+            m_returnTimer = 0f;
         }
     }
 }
