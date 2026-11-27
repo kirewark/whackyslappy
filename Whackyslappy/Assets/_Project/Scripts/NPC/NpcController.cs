@@ -750,7 +750,7 @@ namespace WhackySlappy.NPC
                 if (m_hitCooldownTimer > 0f || m_sweepCooldownTimer > 0f)
                     return;
                 OnSwept(in hit);
-                NpcVoice.Yelp(transform.position, hit.Strength);
+                NpcVoice.Yelp(transform.position, hit.Strength, transform);
             }
             else
             {
@@ -763,7 +763,7 @@ namespace WhackySlappy.NPC
                 if (accepted)
                 {
                     ApplyLaunchReaction(hit.Impulse, hit.Strength);
-                    NpcVoice.Yelp(transform.position, hit.Strength);
+                    NpcVoice.Yelp(transform.position, hit.Strength, transform);
                     // Facial reaction only for accepted hits; cooldown-gated
                     // slaps stay expression-free. m_face is a MonoBehaviour:
                     // explicit null check, never ?..

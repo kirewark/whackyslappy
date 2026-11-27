@@ -18,7 +18,7 @@ namespace WhackySlappy.Player
         [SerializeField] private float m_gravity = -20f;
         [SerializeField] private float m_mouseSensitivity = 0.1f;
         [SerializeField] private float m_pitchClamp = 85f;
-        [SerializeField] private float m_slapHeldLookScale = 0.5f;
+        [SerializeField] private float m_slapHeldLookScale = 0.35f;
         [SerializeField] private float m_bumpMaxDeg = 5f;
 
         private PlayerInputReader m_inputReader;
