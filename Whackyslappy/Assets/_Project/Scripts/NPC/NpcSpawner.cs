@@ -21,8 +21,12 @@ namespace WhackySlappy.NPC
         /// <summary>Seconds between replacement spawn ticks; one spawn max per tick.</summary>
         [SerializeField] private float m_spawnInterval = 3f;
 
-        /// <summary>Minimum spawn distance from the player (m).</summary>
-        [SerializeField] private float m_minSpawnDistance = 4f;
+        /// <summary>Minimum spawn distance from the player (m). The arena
+        /// is 40 m wide, so 12 m is always reachable.</summary>
+        [SerializeField] private float m_minSpawnDistance = 12f;
+
+        /// <summary>Minimum flat spawn distance from any registered corpse (m).</summary>
+        [SerializeField] private float m_minCorpseDistance = 2.5f;
 
         /// <summary>Dead bodies kept in the scene at most; when a newly
         /// registered corpse pushes the queue past this count, the oldest
@@ -105,21 +109,56 @@ namespace WhackySlappy.NPC
                 return;
 
             var player = Object.FindAnyObjectByType<WhackySlappy.Player.FirstPersonController>();
-            Vector3 spawnPos;
+            Vector3 spawnPos = Vector3.zero;
+            float bestScore = float.MinValue;
             int attempts = 0;
             do
             {
                 float x = Random.Range(-(GameBootstrap.FloorHalf - 1f), GameBootstrap.FloorHalf - 1f);
                 float z = Random.Range(-(GameBootstrap.FloorHalf - 1f), GameBootstrap.FloorHalf - 1f);
-                spawnPos = new Vector3(x, 1.0f, z);
+                Vector3 candidate = new Vector3(x, 1.0f, z);
+                float playerDist = player != null
+                    ? FlatDistance(candidate, player.transform.position) : float.MaxValue;
+                float corpseDist = MinCorpseDistance(candidate);
+                if (playerDist >= m_minSpawnDistance && corpseDist >= m_minCorpseDistance)
+                {
+                    spawnPos = candidate;
+                    break;
+                }
+                // Fallback: keep the best candidate (player distance capped
+                // by 4x corpse clearance) instead of skipping or spawning near.
+                float score = Mathf.Min(playerDist, 4f * corpseDist);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    spawnPos = candidate;
+                }
                 attempts++;
-            } while (player != null &&
-                     Vector3.Distance(spawnPos, player.transform.position) < m_minSpawnDistance
-                     && attempts < 20);
+            } while (attempts < 20);
 
             NpcController npc = NpcController.Create(spawnPos, this);
             m_alive.Add(npc);
             m_activeCount++;
+        }
+
+        private static float FlatDistance(Vector3 a, Vector3 b)
+        {
+            float dx = a.x - b.x;
+            float dz = a.z - b.z;
+            return Mathf.Sqrt(dx * dx + dz * dz);
+        }
+
+        // Destroyed corpses read as null through Unity's overloaded == and
+        // are skipped here.
+        private float MinCorpseDistance(Vector3 p)
+        {
+            float min = float.MaxValue;
+            foreach (NpcController corpse in m_corpses)
+            {
+                if (corpse != null)
+                    min = Mathf.Min(min, FlatDistance(p, corpse.transform.position));
+            }
+            return min;
         }
     }
 }
