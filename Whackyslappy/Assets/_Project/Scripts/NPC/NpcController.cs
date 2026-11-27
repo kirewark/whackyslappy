@@ -353,6 +353,7 @@ namespace WhackySlappy.NPC
         private static void ResetStaticState()
         {
             AnyStrikeLanded = null;
+            AnyDied = null;
         }
 
         // -------------------------------------------------------------------------
@@ -692,6 +693,12 @@ namespace WhackySlappy.NPC
         /// recycling can never cause double subscriptions. Cleared at the
         /// start of each play session by ResetStaticState.</summary>
         public static event System.Action<NpcController> AnyStrikeLanded;
+
+        /// <summary>Static mirror of Died, fired for every NPC, so one
+        /// global listener (ScoreHud) counts every KO without per-NPC
+        /// subscriptions. Cleared at the start of each play session by
+        /// ResetStaticState.</summary>
+        public static event System.Action<NpcController> AnyDied;
 
         /// <summary>Current strike timing phase (read-only; surfaced in the
         /// WebGL photo telemetry next to the aggro flag).</summary>
@@ -1529,6 +1536,7 @@ namespace WhackySlappy.NPC
             // slides below m_killHeight must still go through Despawn(),
             // and the spawner's m_alive set dedupes that NotifyDespawn.
             Died?.Invoke(this);
+            AnyDied?.Invoke(this);
             if (m_spawner != null)
             {
                 m_spawner.NotifyDespawn(this);
