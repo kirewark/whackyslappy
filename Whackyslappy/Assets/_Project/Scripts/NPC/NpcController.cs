@@ -999,12 +999,18 @@ namespace WhackySlappy.NPC
                 m_idleTimer = 0f;
                 m_stuckTimer = 0f;
                 m_isWalking = false;
+                // Aggro released: the Angry glare drops back to Idle.
+                if (m_face != null)
+                    m_face.SetExpression(NpcFace.Expression.Idle, 0f);
             }
 
             if (m_aggro)
             {
                 if (!wasAggro)
                     m_avoidTimer = 0f;
+                // Glare, re-requested each tick: refills after timed faces lapse.
+                if (m_face != null)
+                    m_face.SetExpression(NpcFace.Expression.Angry, 0f);
                 ChasePlayer(flatToPlayer, flatDistance, dt);
                 TickStrike(flatDistance, dt);
                 return;
@@ -1478,12 +1484,11 @@ namespace WhackySlappy.NPC
             m_hangTimer = 0f;
             m_tumbleTimer = 0f;
 
-            // NpcFace has no dead expression: Dizzy wins, with a
-            // PositiveInfinity duration that never counts below zero in its
-            // return-to-Idle countdown. m_face is a MonoBehaviour: explicit
+            // Dead is final: NpcFace ignores later requests; ResetToIdle
+            // (recycle) clears it. m_face is a MonoBehaviour: explicit
             // null check, never ?..
             if (m_face != null)
-                m_face.SetExpression(NpcFace.Expression.Dizzy, float.PositiveInfinity);
+                m_face.SetExpression(NpcFace.Expression.Dead, 0f);
 
             // The killing slap already yelped in OnHit's accepted branch;
             // no second sound here (keeping it simple).
@@ -1542,9 +1547,11 @@ namespace WhackySlappy.NPC
             m_aggro = false;
             m_avoidTimer = 0f;
             // Phase 2b: a recycled NPC must not inherit a dead flag or
-            // missing health.
+            // missing health or a frozen Dead face.
             m_isDead = false;
             m_health = NpcDamage.MaxHealth;
+            if (m_face != null)
+                m_face.ResetToIdle();
             m_rb.linearVelocity = Vector3.zero;
             m_rb.angularVelocity = Vector3.zero;
             transform.rotation = Quaternion.identity;
