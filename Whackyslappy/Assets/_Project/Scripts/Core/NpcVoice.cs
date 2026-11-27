@@ -21,7 +21,12 @@ namespace WhackySlappy.Core
         private static bool s_ouchLoadAttempted;
         private static int s_lastOuchIndex = -1;
 
-        public static void Yelp(Vector3 position, float strength)
+        /// <summary>
+        /// Play one NPC reaction/yelp sound, rate-limited globally.
+        /// Pass the NPC's root Transform as follow so the sound travels
+        /// with the NPC while it is flying away.
+        /// </summary>
+        public static void Yelp(Vector3 position, float strength, Transform follow = null)
         {
             float now = Time.unscaledTime; // hit-stop safe: ignores Time.timeScale
             if (now < s_nextAllowedTime)
@@ -57,7 +62,7 @@ namespace WhackySlappy.Core
             {
                 // Louder hits also sound slightly higher-pitched.
                 float ouchPitch = Random.Range(0.92f, 1.1f) + 0.08f * strength;
-                SlapAudio.PlayClip(ouchClip, position, volume, ouchPitch);
+                SlapAudio.PlayClip(ouchClip, position, volume, ouchPitch, follow);
                 return;
             }
 
@@ -78,7 +83,7 @@ namespace WhackySlappy.Core
             }
 
             // volume is fed through Play's strength parameter to scale the sound.
-            SlapAudio.Play(kind, position, volume);
+            SlapAudio.Play(kind, position, volume, follow);
         }
 
         // Returns a random non-null Ouch clip, avoiding the same clip two

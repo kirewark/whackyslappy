@@ -58,6 +58,11 @@ namespace WhackySlappy.Core
         [SerializeField] private float m_realClipMaxPitch = 1.08f;
         [SerializeField] private float m_realClipVolumeFloor = 0.35f;
 
+        [Header("Spatial Rolloff")]
+        // Unity defaults (min 1 / max 500) barely attenuate distant sounds.
+        [SerializeField] private float m_minDistance = 2f;
+        [SerializeField] private float m_maxDistance = 45f;
+
         // Static mirrors of the tuning fields: static Play cannot read
         // instance fields directly. Awake copies them from the component.
         private static float s_minPitch = 0.8f;
@@ -81,6 +86,8 @@ namespace WhackySlappy.Core
         private static float s_realClipMinPitch = 0.92f;
         private static float s_realClipMaxPitch = 1.08f;
         private static float s_realClipVolumeFloor = 0.35f;
+        private static float s_minDistance = 2f;
+        private static float s_maxDistance = 45f;
 
         private const float TwoPi = 2f * Mathf.PI;
 
@@ -98,6 +105,16 @@ namespace WhackySlappy.Core
 
         private static readonly List<AudioSource> s_sourcePool = new();
 
+        // Sources tagged to follow a moving Transform (flung NPCs). Capped
+        // at the pool size; entries are swap-removed when done, so the
+        // LateUpdate sweep never allocates.
+        private struct FollowEntry
+        {
+            public AudioSource source;
+            public Transform follow;
+        }
+        private static readonly List<FollowEntry> s_followers = new();
+
         // Clears cached Unity objects on every domain reload: pool sources
         // and baked clips are destroyed with the previous play session but
         // the statics survive, leaving missing-reference entries (same
@@ -106,6 +123,7 @@ namespace WhackySlappy.Core
         private static void ResetStaticState()
         {
             s_sourcePool.Clear();
+            s_followers.Clear();
             s_slapLight = null;
             s_slapHard = null;
             s_sillyLayerWithRealClips = false;
@@ -230,7 +248,11 @@ namespace WhackySlappy.Core
         /// <param name="kind">Which procedural sound to play.</param>
         /// <param name="position">World-space position for spatial audio.</param>
         /// <param name="strength">Volume strength; 1.0 = normal volume.</param>
-        public static void Play(SoundKind kind, Vector3 position, float strength)
+        /// <param name="follow">Optional Transform whose position the
+        /// sound tracks while playing (e.g. a flung NPC); null keeps the
+        /// sound fixed at position.</param>
+        public static void Play(SoundKind kind, Vector3 position, float strength,
+            Transform follow = null)
         {
             EnsureClipForKind(kind);
 
@@ -249,6 +271,7 @@ namespace WhackySlappy.Core
             source.pitch = Random.Range(pitchMin, pitchMax);
             source.spatialBlend = 1f;
             source.Play();
+            TrackFollow(source, follow);
         }
 
         /// <summary>
@@ -260,7 +283,11 @@ namespace WhackySlappy.Core
         /// <param name="position">World-space position for spatial audio.</param>
         /// <param name="volume">Linear volume for this play.</param>
         /// <param name="pitch">Playback pitch for this play.</param>
-        public static void PlayClip(AudioClip clip, Vector3 position, float volume, float pitch)
+        /// <param name="follow">Optional Transform whose position the
+        /// sound tracks while playing (e.g. a flung NPC); null keeps the
+        /// sound fixed at position.</param>
+        public static void PlayClip(AudioClip clip, Vector3 position, float volume,
+            float pitch, Transform follow = null)
         {
             if (clip == null) return;
 
@@ -273,6 +300,7 @@ namespace WhackySlappy.Core
             source.pitch = pitch;
             source.spatialBlend = 1f;
             source.Play();
+            TrackFollow(source, follow);
         }
 
         private static AudioSource GetPooledSource()
@@ -288,8 +316,75 @@ namespace WhackySlappy.Core
             go.hideFlags = HideFlags.HideAndDontSave;
             var src = go.AddComponent<AudioSource>();
             src.playOnAwake = false;
+            ConfigureSource(src);
             s_sourcePool.Add(src);
             return src;
+        }
+
+        // One place that makes every pooled source spatial with real
+        // distance rolloff: logarithmic attenuation between tunable
+        // min/max distances, no doppler (moving sources are hand-tracked)
+        // and no stereo spread. Called from both pool creation sites.
+        private static void ConfigureSource(AudioSource src)
+        {
+            src.spatialBlend = 1f;
+            src.rolloffMode = AudioRolloffMode.Logarithmic;
+            src.minDistance = s_minDistance;
+            src.maxDistance = s_maxDistance;
+            src.dopplerLevel = 0f;
+            src.spread = 0f;
+        }
+
+        // Register, update or clear the follow entry for a source.
+        // follow == null clears a stale entry left on a recycled source.
+        // The list never grows past the pool size, so this stays
+        // allocation-free after warm-up; swap-remove keeps it O(1).
+        private static void TrackFollow(AudioSource source, Transform follow)
+        {
+            for (int i = 0; i < s_followers.Count; i++)
+            {
+                if (s_followers[i].source != source) continue;
+                if (follow == null)
+                {
+                    int last = s_followers.Count - 1;
+                    s_followers[i] = s_followers[last];
+                    s_followers.RemoveAt(last);
+                }
+                else
+                {
+                    // Struct in a List: mutate through a local, then
+                    // write it back (indexer returns a copy).
+                    FollowEntry entry = s_followers[i];
+                    entry.follow = follow;
+                    s_followers[i] = entry;
+                }
+                return;
+            }
+            if (follow != null && s_followers.Count < s_sourcePool.Count)
+            {
+                s_followers.Add(new FollowEntry { source = source, follow = follow });
+            }
+        }
+
+        // Drag follow-tagged sources along with their target (a flung
+        // NPC) and swap-remove entries whose clip finished or whose
+        // source/target was destroyed.
+        private void LateUpdate()
+        {
+            for (int i = s_followers.Count - 1; i >= 0; i--)
+            {
+                FollowEntry entry = s_followers[i];
+                if (entry.source == null || entry.follow == null || !entry.source.isPlaying)
+                {
+                    int last = s_followers.Count - 1;
+                    s_followers[i] = s_followers[last];
+                    s_followers.RemoveAt(last);
+                }
+                else
+                {
+                    entry.source.transform.position = entry.follow.position;
+                }
+            }
         }
 
         private void Awake()
@@ -311,6 +406,8 @@ namespace WhackySlappy.Core
             s_realClipMinPitch = m_realClipMinPitch;
             s_realClipMaxPitch = m_realClipMaxPitch;
             s_realClipVolumeFloor = m_realClipVolumeFloor;
+            s_minDistance = m_minDistance;
+            s_maxDistance = m_maxDistance;
             s_sillyLayerWithRealClips = m_sillyLayerWithRealClips;
             FillRealSlapClips();
             EnsureAllClips();
@@ -323,6 +420,7 @@ namespace WhackySlappy.Core
                     go.hideFlags = HideFlags.HideAndDontSave;
                     var src = go.AddComponent<AudioSource>();
                     src.playOnAwake = false;
+                    ConfigureSource(src);
                     s_sourcePool.Add(src);
                 }
             }
