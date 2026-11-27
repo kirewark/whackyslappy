@@ -180,10 +180,11 @@ namespace WhackySlappy.Core
             var trunk = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             trunk.name = "TreeTrunk";
             trunk.transform.SetParent(horizon, false);
-            // Cylinders are centred, so the trunk bottom sinks 0.25 m into
-            // the hillside instead of balancing on a hair-thin contact.
+            // Cylinders are 2 units tall at scale 1 and centred on the
+            // transform, so half-height scale y anchors the bottom 0.25 m
+            // into the hillside; thicker x/z so trunks read on far hills.
             trunk.transform.position = basePos + new Vector3(0f, trunkH * 0.5f - 0.25f, 0f);
-            trunk.transform.localScale = new Vector3(0.45f, trunkH, 0.45f);
+            trunk.transform.localScale = new Vector3(0.7f, trunkH * 0.5f, 0.7f);
             RemoveCollider(trunk);
             DisableShadow(trunk);
             Tint(trunk, TrunkColor);
@@ -218,7 +219,9 @@ namespace WhackySlappy.Core
             // Spheres are centred on their transform; the cone mesh has
             // its pivot at the base, so its origin drops half a scaled
             // height to keep the same centre (scale y = canopyH).
-            float canopyY = groundY + trunkH - 0.25f + canopyH * 0.42f;
+            // Height ABOVE basePos (basePos already includes groundY):
+            // 0.42 of the canopy height over the trunk top.
+            float canopyY = trunkH - 0.25f + canopyH * 0.42f;
             canopy.transform.position = basePos + new Vector3(
                 0f, pine ? canopyY - canopyH * 0.5f : canopyY, 0f);
             canopy.transform.localScale = pine
