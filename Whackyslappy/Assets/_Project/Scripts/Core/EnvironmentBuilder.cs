@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -68,6 +69,15 @@ namespace WhackySlappy.Core
             GrassTufts.Build(arenaRoot, GraphicsQuality.Level);
             ArenaProps.Build(arenaRoot);
             ParkHorizon.Build(arenaRoot);
+
+            // Phase 3a: batching is off, so merge same-colour props into
+            // chunks once every builder above has run; grass is already chunked.
+            CombineInto(arenaRoot, "PathBorder", true, "PathStrip_");
+            CombineInto(arenaRoot, "ArenaProps", false,
+                "FencePost", "FenceRail", "FlowerStem", "Flower_");
+            CombineInto(arenaRoot, "ArenaProps", true, "Tree_");
+            CombineInto(arenaRoot, "Horizon", true, "MeadowPatch");
+            CombineInto(arenaRoot, "Horizon", false, "TreeTrunk");
         }
 
         /// <summary>
@@ -321,6 +331,84 @@ namespace WhackySlappy.Core
 
                 if (pathMat != null)
                     strip.GetComponent<MeshRenderer>().material = pathMat;
+            }
+        }
+
+        /// <summary>
+        /// Merges matching-name MeshRenderers into one chunk per distinct
+        /// colour (prop tints are shared constants, so exact equality
+        /// buckets them) with one DefaultLitMaterial each; batching is
+        /// off in ProjectSettings. These groups wrap the camera, so ~10 m
+        /// grid cells would add draws without culling; colliders stay on
+        /// their objects. Random-tint props (rocks, hills, canopies) are
+        /// left out. Untested in the Unity editor (Roslyn-compiled).
+        /// </summary>
+        private static void CombineInto(GameObject arenaRoot,
+            string childRootName, bool shadowsOn, params string[] prefixes)
+        {
+            Transform childRoot = arenaRoot.transform.Find(childRootName);
+            if (childRoot == null) return;
+            var buckets = new List<List<MeshRenderer>>();
+            var colors = new List<Color>();
+            var layers = new List<int>();
+            foreach (var r in childRoot.GetComponentsInChildren<MeshRenderer>(false))
+            {
+                var mf = r.GetComponent<MeshFilter>();
+                if (mf == null || mf.sharedMesh == null || r.sharedMaterial == null)
+                    continue;
+                bool match = false;
+                foreach (var p in prefixes)
+                    if (r.name.StartsWith(p, System.StringComparison.Ordinal))
+                    { match = true; break; }
+                if (!match) continue;
+                int gi = colors.IndexOf(r.sharedMaterial.color);
+                if (gi < 0)
+                {
+                    gi = colors.Count;
+                    colors.Add(r.sharedMaterial.color);
+                    layers.Add(r.gameObject.layer);
+                    buckets.Add(new List<MeshRenderer>());
+                }
+                buckets[gi].Add(r);
+            }
+            for (int gi = 0; gi < buckets.Count; gi++)
+            {
+                var group = buckets[gi];
+                var instances = new CombineInstance[group.Count];
+                int vertexCount = 0;
+                for (int i = 0; i < group.Count; i++)
+                {
+                    var mr = group[i];
+                    var mf = mr.GetComponent<MeshFilter>();
+                    instances[i] = new CombineInstance
+                    {
+                        mesh = mf.sharedMesh,
+                        transform = mr.transform.localToWorldMatrix
+                    };
+                    vertexCount += mf.sharedMesh.vertexCount;
+                    if (mr.GetComponent<Collider>() == null)
+                        Object.DestroyImmediate(mr.gameObject);
+                    else
+                    {
+                        Object.DestroyImmediate(mf);
+                        Object.DestroyImmediate(mr);
+                    }
+                }
+                var mesh = new Mesh { name = childRootName + "_Chunk" + gi };
+                if (vertexCount > 65000)
+                    mesh.indexFormat = IndexFormat.UInt32;
+                mesh.CombineMeshes(instances, true, true);
+                mesh.RecalculateBounds();
+                var chunk = new GameObject(childRootName + "_Chunk" + gi);
+                chunk.transform.SetParent(childRoot, false);
+                chunk.layer = layers[gi];
+                chunk.AddComponent<MeshFilter>().sharedMesh = mesh;
+                var chunkRenderer = chunk.AddComponent<MeshRenderer>();
+                Material chunkMat = DefaultLitMaterial.Create();
+                if (chunkMat != null) chunkMat.color = colors[gi];
+                chunkRenderer.sharedMaterial = chunkMat;
+                chunkRenderer.shadowCastingMode =
+                    shadowsOn ? ShadowCastingMode.On : ShadowCastingMode.Off;
             }
         }
     }
