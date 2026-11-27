@@ -160,6 +160,10 @@ namespace WhackySlappy.Core
                     fwd.y = 0f;
                     fwd = fwd.sqrMagnitude < 0.0001f ? Vector3.forward : fwd.normalized;
                     scenarioNpc = NpcController.Create(fps.transform.position + fwd * 1.5f, spawner);
+                    // Phase 5b: aggro off while staging so the slap
+                    // telemetry stays comparable; RunProtocol's sampling
+                    // loop re-arms it 2.5 s into the shot.
+                    scenarioNpc.AggroEnabled = false;
                     // The Main Camera stays: it rides the now-motionless
                     // player rig (input is off) and already faces the NPC.
                 }
@@ -167,6 +171,9 @@ namespace WhackySlappy.Core
                 {
                     ClearArenaForSingleNpc(spawner);
                     scenarioNpc = NpcController.Create(new Vector3(0f, 1f, 4f), spawner);
+                    // Phase 5b: aggro off for this shot's NPC and never
+                    // re-armed, so getup telemetry stays as before.
+                    scenarioNpc.AggroEnabled = false;
                     Vector3 focus = scenarioNpc.transform.position + Vector3.up * 0.9f;
                     Vector3 camPos = scenarioNpc.transform.position + Vector3.right * 4f + Vector3.up * 0.9f;
                     SetFixedCamera(camPos, Quaternion.LookRotation(focus - camPos));
@@ -243,6 +250,13 @@ namespace WhackySlappy.Core
 
                 for (int i = 0; i < kSampleCount; i++)
                 {
+                    // Phase 5b: re-arm the slap shot's NPC aggro 2.5 s
+                    // after the loop starts (10 samples x 0.25 s), so the
+                    // final samples show whether it turns aggressive and
+                    // walks toward the player. Overview shots keep aggro.
+                    if (m_shot == "slap" && scenarioNpc != null && i == 10)
+                        scenarioNpc.AggroEnabled = true;
+
                     yield return new WaitForSecondsRealtime(kSampleInterval);
                     Debug.Log("[shot] state " + BuildStateJson());
                 }
@@ -284,6 +298,7 @@ namespace WhackySlappy.Core
                       .Append(",\"tumbling\":").Append(npc.IsTumbling ? "true" : "false")
                       .Append(",\"speed\":").Append(npc.Speed.ToString("F2", CultureInfo.InvariantCulture))
                       .Append(",\"walking\":").Append(npc.IsWalking ? "true" : "false")
+                      .Append(",\"aggro\":").Append(npc.IsAggro ? "true" : "false")
                       .Append('}');
 
                     // Stay well under the CI's 2000-char line limit; with

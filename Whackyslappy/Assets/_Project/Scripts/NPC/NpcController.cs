@@ -50,6 +50,19 @@ namespace WhackySlappy.NPC
         [SerializeField] private float m_stuckTime = 1f;
         [SerializeField] private float m_stuckBrakeTime = 0.3f;
 
+        /// <summary>Phase 5b aggro chase. The NPC locks onto the player
+        /// when the horizontal distance drops to m_aggroEnterRadius and
+        /// stays locked until it exceeds m_aggroExitRadius (hysteresis
+        /// lives in NpcAggro.Evaluate). m_chaseSpeed replaces the wander
+        /// pace while locked, and m_attackRange is the stopping distance:
+        /// the NPC brakes to a standstill there and keeps facing the
+        /// player. Nothing here pushes or damages the player (strikes are
+        /// a later phase); chase only runs inside State.Wander.</summary>
+        [SerializeField] private float m_aggroEnterRadius = 8f;
+        [SerializeField] private float m_aggroExitRadius = 13f;
+        [SerializeField] private float m_chaseSpeed = 2.4f;
+        [SerializeField] private float m_attackRange = 1.6f;
+
         /// <summary>Max yaw rate (deg/s) the facing controller turns the
         /// NPC toward its travel direction, and the P gain (1/s) turning
         /// the yaw error into that rate.</summary>
@@ -205,6 +218,20 @@ namespace WhackySlappy.NPC
         private float m_idleTimer = 0f;
         private float m_stuckTimer = 0f;
         private bool m_isWalking = false;
+
+        // Phase 5b: aggro lock (hysteresis in NpcAggro.Evaluate) plus
+        // the obstacle-detour hold timer for the chase steering.
+        private bool m_aggro;
+        private float m_avoidTimer;
+        private float m_avoidSign;
+
+        /// <summary>Angle (deg) the chase heading swings around a blocked
+        /// forward prop raycast and how long the detour holds; the probe
+        /// mirrors the wander prop ray (0.5 m up, Environment layer,
+        /// 1 m ahead).</summary>
+        private const float kAvoidAngleDeg = 60f;
+        private const float kAvoidDuration = 0.5f;
+        private const float kAvoidProbeDistance = 1f;
 
         // World distance from the root pivot down to the feet. The jointed
         // legs, NOT the torso capsule, reach the floor in the current body
@@ -605,6 +632,17 @@ namespace WhackySlappy.NPC
         /// only; photo mode / EditMode tests).</summary>
         public Vector3 WanderTarget => m_wanderTarget;
 
+        /// <summary>True while this NPC has aggro-locked the player and
+        /// is chasing (read-only; surfaced in the WebGL photo
+        /// telemetry).</summary>
+        public bool IsAggro => m_aggro;
+
+        /// <summary>Master switch for the aggro chase. The WebGL photo
+        /// shots stage it off so slap/getup telemetry stays comparable,
+        /// and the slap shot re-arms it mid-shot to watch the NPC close
+        /// in. Defaults to true.</summary>
+        public bool AggroEnabled { get; set; } = true;
+
         /// <summary>Angle (degrees) between this NPC's up axis and world up.</summary>
         public float TiltDegrees => Vector3.Angle(transform.up, Vector3.up);
 
@@ -633,6 +671,7 @@ namespace WhackySlappy.NPC
             // Force is applied by the slap hand; here we only change state.
 
             m_state = State.Tumbling;
+            m_aggro = false;
             m_hitCooldownTimer = m_hitCooldown;
             m_settleTimer = 0f;
             m_tumbleTimer = 0f;
@@ -737,6 +776,7 @@ namespace WhackySlappy.NPC
             // must stay slap-able right after a trip.
             m_sweepCooldownTimer = m_sweepCooldown;
             m_state = State.Tumbling;
+            m_aggro = false;
             m_settleTimer = 0f;
             m_tumbleTimer = 0f;
 
@@ -859,6 +899,7 @@ namespace WhackySlappy.NPC
                 m_settleTimer = 0f;
                 m_tumbleTimer = 0f;
                 m_isWalking = false;
+                m_aggro = false;
                 return; // no wander push while fallen
             }
 
@@ -866,9 +907,45 @@ namespace WhackySlappy.NPC
             // later aggro work, but wandering no longer depends on the
             // player existing or being near, and no longer stops when a
             // player stands in front of the NPC.
-            GetCachedPlayerTransform();
+            Transform player = GetCachedPlayerTransform();
 
             float dt = Time.fixedDeltaTime;
+
+            // Phase 5b: aggro override. Evaluated before the idle,
+            // target-picking and stuck logic so none of them run while
+            // chasing (standing still at attack range is intended).
+            bool wasAggro = m_aggro;
+            Vector3 flatToPlayer = Vector3.zero;
+            if (!AggroEnabled || player == null)
+            {
+                m_aggro = false;
+            }
+            else
+            {
+                flatToPlayer = NpcAggro.FlatDirection(
+                    transform.position, player.position);
+                m_aggro = NpcAggro.Evaluate(
+                    wasAggro, flatToPlayer.magnitude,
+                    m_aggroEnterRadius, m_aggroExitRadius);
+            }
+
+            if (wasAggro && !m_aggro)
+            {
+                // Aggro just released: resume wandering from a fresh
+                // target, with no carry-over of the brake/stuck state.
+                m_hasWanderTarget = false;
+                m_idleTimer = 0f;
+                m_stuckTimer = 0f;
+                m_isWalking = false;
+            }
+
+            if (m_aggro)
+            {
+                if (!wasAggro)
+                    m_avoidTimer = 0f;
+                ChasePlayer(flatToPlayer, dt);
+                return;
+            }
 
             // Idle pause after reaching a target (also the short brake
             // after getting wedged on a prop): drive the horizontal
@@ -952,6 +1029,86 @@ namespace WhackySlappy.NPC
             m_rb.linearVelocity = new Vector3(steered.x, velocity.y, steered.z);
             m_isWalking = true;
 
+            ApplyFacingTorque(dir);
+        }
+
+        /// <summary>
+        /// Phase 5b chase (called only from UpdateWander while m_aggro):
+        /// steer toward the player's XZ position with the shared
+        /// SteerHorizontal acceleration at m_chaseSpeed, brake to a
+        /// standstill inside m_attackRange while keeping facing on the
+        /// player, and detour around a blocked forward prop raycast by
+        /// swinging the desired heading kAvoidAngleDeg to the first free
+        /// side for up to kAvoidDuration. The NPC never pushes or
+        /// damages the player; it just stops at m_attackRange.
+        /// </summary>
+        private void ChasePlayer(Vector3 flatToPlayer, float dt)
+        {
+            m_isWalking = true;
+
+            float distance = flatToPlayer.magnitude;
+
+            if (distance <= m_attackRange)
+            {
+                // In attack range: zero desired velocity (the same
+                // acceleration), still facing the player.
+                SteerWander(Vector3.zero, dt);
+                ApplyFacingTorque(flatToPlayer);
+                return;
+            }
+
+            Vector3 dir = flatToPlayer / distance;
+
+            if (m_avoidTimer > 0f)
+            {
+                // Holding a detour heading: swing the straight-at-player
+                // direction to the side chosen when the detour started.
+                m_avoidTimer -= dt;
+                dir = RotateXZ(dir, m_avoidSign * kAvoidAngleDeg);
+            }
+            else
+            {
+                // The same prop ray the wander steering uses: 0.5 m up
+                // so it never clips the platform top at y 0.
+                Vector3 probeOrigin =
+                    transform.position + Vector3.up * 0.5f;
+                if (Physics.Raycast(probeOrigin, dir, kAvoidProbeDistance,
+                                    GameLayers.MaskEnvironment))
+                {
+                    Vector3 left = RotateXZ(dir, kAvoidAngleDeg);
+                    bool leftBlocked = Physics.Raycast(
+                        probeOrigin, left, kAvoidProbeDistance,
+                        GameLayers.MaskEnvironment);
+                    m_avoidSign = leftBlocked ? -1f : 1f;
+                    m_avoidTimer = kAvoidDuration;
+                    dir = RotateXZ(dir, m_avoidSign * kAvoidAngleDeg);
+                }
+            }
+
+            SteerWander(dir * m_chaseSpeed, dt);
+
+            // Face the player itself (not the detour heading).
+            ApplyFacingTorque(flatToPlayer);
+        }
+
+        /// <summary>Rotate a flat direction in the XZ plane by a yaw
+        /// angle (degrees); used for the chase obstacle detour.</summary>
+        private static Vector3 RotateXZ(Vector3 dir, float angleDeg)
+        {
+            float rad = angleDeg * Mathf.Deg2Rad;
+            float c = Mathf.Cos(rad);
+            float s = Mathf.Sin(rad);
+            return new Vector3(dir.x * c - dir.z * s, 0f,
+                               dir.x * s + dir.z * c);
+        }
+
+        /// <summary>
+        /// Yaw-only PD facing, extracted verbatim from UpdateWander so
+        /// the chase path faces the player with identical behaviour;
+        /// UpdateWander now calls it with its travel direction.
+        /// </summary>
+        private void ApplyFacingTorque(Vector3 dir)
+        {
             // Facing: turn toward the travel direction by yaw only —
             // +z forward faces the target (NpcBodyBuilder's layout).
             // Torque about world up, not MoveRotation: MoveRotation
@@ -1107,6 +1264,7 @@ namespace WhackySlappy.NPC
         private void EnterGettingUp()
         {
             m_state = State.GettingUp;
+            m_aggro = false;
             m_settleTimer = 0f;
             m_tumbleTimer = 0f;
             // The recovery animation plays with a strained face.
@@ -1166,6 +1324,7 @@ namespace WhackySlappy.NPC
                 return;
             m_isDead = true;
             m_state = State.Dead;
+            m_aggro = false;
             // End the silly hang-time window so kill gravity pulls the body
             // straight down; the knockdown/settle/tumble timers no longer
             // matter because the Dead state skips every transition check.
@@ -1232,6 +1391,9 @@ namespace WhackySlappy.NPC
             m_idleTimer = 0f;
             m_stuckTimer = 0f;
             m_isWalking = false;
+            // Phase 5b: a recycled NPC must not inherit an aggro lock.
+            m_aggro = false;
+            m_avoidTimer = 0f;
             // Phase 2b: a recycled NPC must not inherit a dead flag or
             // missing health.
             m_isDead = false;
