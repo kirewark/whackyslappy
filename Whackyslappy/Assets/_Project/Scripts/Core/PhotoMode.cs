@@ -299,6 +299,8 @@ namespace WhackySlappy.Core
                       .Append(",\"speed\":").Append(npc.Speed.ToString("F2", CultureInfo.InvariantCulture))
                       .Append(",\"walking\":").Append(npc.IsWalking ? "true" : "false")
                       .Append(",\"aggro\":").Append(npc.IsAggro ? "true" : "false")
+                      .Append(",\"strike\":\"")
+                      .Append(npc.StrikePhase.ToString()).Append('"')
                       .Append('}');
 
                     // Stay well under the CI's 2000-char line limit; with
