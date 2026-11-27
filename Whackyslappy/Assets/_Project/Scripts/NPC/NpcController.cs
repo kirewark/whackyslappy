@@ -63,6 +63,15 @@ namespace WhackySlappy.NPC
         [SerializeField] private float m_chaseSpeed = 2.4f;
         [SerializeField] private float m_attackRange = 1.6f;
 
+        /// <summary>Phase 6 strike telegraph torques, applied with
+        /// AddTorque(ForceMode.Force) to the 0.15 kg right upper-arm ragdoll
+        /// limb only: Windup raises it forward about the NPC's local right
+        /// axis (scaled by phase progress), Swing drives it down with the
+        /// opposite torque. Nothing reaches the player: no forces on it, no
+        /// collider changes, no damage — the strike is telegraph + timing.</summary>
+        [SerializeField] private float m_strikeRaiseTorque = 1.5f;
+        [SerializeField] private float m_strikeSwingTorque = 3f;
+
         /// <summary>Max yaw rate (deg/s) the facing controller turns the
         /// NPC toward its travel direction, and the P gain (1/s) turning
         /// the yaw error into that rate.</summary>
@@ -224,6 +233,14 @@ namespace WhackySlappy.NPC
         private bool m_aggro;
         private float m_avoidTimer;
         private float m_avoidSign;
+
+        // Phase 6: pure strike timing machine (NpcStrike, no Unity deps).
+        // Ticked in UpdateWander's FixedUpdate path while aggro; Reset
+        // whenever the NPC is not chasing or not in State.Wander.
+        private NpcStrike m_strike = new NpcStrike();
+        // Lazily cached Rigidbody of the limb NpcBodyBuilder names
+        // "Arm_R_Upper" (jointed ragdoll child of the NPC root).
+        private Rigidbody m_rightUpperArmRb;
 
         /// <summary>Angle (deg) the chase heading swings around a blocked
         /// forward prop raycast and how long the detour holds; the probe
@@ -557,6 +574,13 @@ namespace WhackySlappy.NPC
                     : PhysicsMaterialCombine.Average;
             }
 
+            // Phase 6: no strike may be in progress outside State.Wander
+            // (slap/sweep knockdowns, GettingUp and Die all leave Wander in
+            // the same breath they clear m_aggro, so this single guard covers
+            // every state-change site; Reset is cheap and idempotent).
+            if (m_state != State.Wander)
+                m_strike.Reset();
+
             switch (m_state)
             {
                 case State.Wander:
@@ -636,6 +660,16 @@ namespace WhackySlappy.NPC
         /// is chasing (read-only; surfaced in the WebGL photo
         /// telemetry).</summary>
         public bool IsAggro => m_aggro;
+
+        /// <summary>Fires once per strike, on the fixed tick the Swing
+        /// phase begins (Swing entry only; the telegraph does not damage
+        /// or touch the player — later player-side feedback, e.g. a dodge
+        /// prompt, subscribes to this instead of polling).</summary>
+        public event System.Action<NpcController> StrikeLanded;
+
+        /// <summary>Current strike timing phase (read-only; surfaced in the
+        /// WebGL photo telemetry next to the aggro flag).</summary>
+        public NpcStrikePhase StrikePhase => m_strike.Phase;
 
         /// <summary>Master switch for the aggro chase. The WebGL photo
         /// shots stage it off so slap/getup telemetry stays comparable,
@@ -954,8 +988,14 @@ namespace WhackySlappy.NPC
                 if (!wasAggro)
                     m_avoidTimer = 0f;
                 ChasePlayer(flatToPlayer, flatDistance, dt);
+                TickStrike(flatDistance, dt);
                 return;
             }
+
+            // Phase 6: not chasing (or aggro disabled / no player) — drop
+            // any strike in progress. The arm pose releases on its own: the
+            // telegraph applies torque only while a phase is running.
+            m_strike.Reset();
 
             // Idle pause after reaching a target (also the short brake
             // after getting wedged on a prop): drive the horizontal
@@ -1098,6 +1138,55 @@ namespace WhackySlappy.NPC
 
             // Face the player itself (not the detour heading).
             ApplyFacingTorque(flatDir);
+        }
+
+        /// <summary>Phase 6 strike tick (called only from UpdateWander's
+        /// FixedUpdate path while m_aggro): advances the pure NpcStrike
+        /// timer machine (windup, swing, 2 s cooldown) and telegraphs it on
+        /// the ragdoll right upper-arm limb. inRange pads m_attackRange by
+        /// 0.2 m so the windup starts while the NPC settles against the
+        /// brake distance. Torque acts on the arm limb ONLY — never on the
+        /// root body, the player, colliders or triggers; no damage. Fires
+        /// StrikeLanded exactly once, on the tick Swing begins.</summary>
+        private void TickStrike(float flatDistance, float dt)
+        {
+            bool landed = m_strike.Tick(
+                dt, flatDistance <= m_attackRange + 0.2f);
+
+            if (m_strike.Phase == NpcStrikePhase.Windup
+                || m_strike.Phase == NpcStrikePhase.Swing)
+            {
+                Rigidbody arm = GetRightUpperArmRb();
+                if (arm != null)
+                {
+                    // Rotation about the NPC's local right axis: negative
+                    // pitches the hanging arm forward/up into the windup,
+                    // positive (opposite) swings it back down. Both scale
+                    // with phase progress; ForceMode.Force keeps the tiny
+                    // 0.15 kg limb's acceleration bounded.
+                    float k = m_strike.Phase == NpcStrikePhase.Windup
+                        ? -m_strikeRaiseTorque * m_strike.PhaseProgress
+                        : m_strikeSwingTorque * m_strike.PhaseProgress;
+                    arm.AddTorque(transform.right * k, ForceMode.Force);
+                }
+            }
+
+            if (landed)
+                StrikeLanded?.Invoke(this);
+        }
+
+        /// <summary>Lazily caches the Rigidbody of the "Arm_R_Upper" limb
+        /// that NpcBodyBuilder.AddLimbs builds under the NPC root. Null-safe:
+        /// stays a plain lookup if the build ever omits limbs.</summary>
+        private Rigidbody GetRightUpperArmRb()
+        {
+            if (m_rightUpperArmRb == null)
+            {
+                Transform arm = transform.Find("Arm_R_Upper");
+                if (arm != null)
+                    m_rightUpperArmRb = arm.GetComponent<Rigidbody>();
+            }
+            return m_rightUpperArmRb;
         }
 
         /// <summary>Rotate a flat direction in the XZ plane by a yaw
