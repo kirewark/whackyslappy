@@ -247,6 +247,8 @@ namespace WhackySlappy.Core
             {
                 arenaRoot.AddComponent<Crosshair>();
             }
+            if (arenaRoot.GetComponent<ScoreHud>() == null) // the score HUD lives on the arena root too
+                arenaRoot.AddComponent<ScoreHud>();
         }
 
         /// <summary>
