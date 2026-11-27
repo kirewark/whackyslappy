@@ -339,6 +339,14 @@ namespace WhackySlappy.NPC
             return s_playerTransform;
         }
 
+        // Statics must not leak across play sessions when the editor skips
+        // domain reload (same pattern as SlapAudio / SillyPhysics).
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticState()
+        {
+            AnyStrikeLanded = null;
+        }
+
         // -------------------------------------------------------------------------
         // MonoBehaviour
         // -------------------------------------------------------------------------
@@ -670,6 +678,12 @@ namespace WhackySlappy.NPC
         /// or touch the player — later player-side feedback, e.g. a dodge
         /// prompt, subscribes to this instead of polling).</summary>
         public event System.Action<NpcController> StrikeLanded;
+
+        /// <summary>Static mirror of StrikeLanded, fired for every NPC, so
+        /// one global listener (StrikeFeedback) covers all NPCs and NPC
+        /// recycling can never cause double subscriptions. Cleared at the
+        /// start of each play session by ResetStaticState.</summary>
+        public static event System.Action<NpcController> AnyStrikeLanded;
 
         /// <summary>Current strike timing phase (read-only; surfaced in the
         /// WebGL photo telemetry next to the aggro flag).</summary>
@@ -1190,7 +1204,10 @@ namespace WhackySlappy.NPC
             }
 
             if (landed)
+            {
                 StrikeLanded?.Invoke(this);
+                AnyStrikeLanded?.Invoke(this);
+            }
         }
 
         /// <summary>Lazily caches the Rigidbody of the "Arm_R_Lower" limb
