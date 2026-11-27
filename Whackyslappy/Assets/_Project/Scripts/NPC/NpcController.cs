@@ -916,16 +916,26 @@ namespace WhackySlappy.NPC
             // chasing (standing still at attack range is intended).
             bool wasAggro = m_aggro;
             Vector3 flatToPlayer = Vector3.zero;
+            float flatDistance = 0f;
             if (!AggroEnabled || player == null)
             {
                 m_aggro = false;
             }
             else
             {
-                flatToPlayer = NpcAggro.FlatDirection(
-                    transform.position, player.position);
+                // NpcAggro.FlatDirection returns a unit vector, so its
+                // magnitude can never be the distance (the old code read
+                // 1 and kept every NPC permanently aggro). Measure the
+                // real horizontal distance and derive the unit
+                // direction from it.
+                Vector3 toPlayer = player.position - transform.position;
+                toPlayer.y = 0f;
+                flatDistance = toPlayer.magnitude;
+                flatToPlayer = flatDistance > 1e-5f
+                    ? toPlayer / flatDistance
+                    : Vector3.zero;
                 m_aggro = NpcAggro.Evaluate(
-                    wasAggro, flatToPlayer.magnitude,
+                    wasAggro, flatDistance,
                     m_aggroEnterRadius, m_aggroExitRadius);
             }
 
@@ -943,7 +953,7 @@ namespace WhackySlappy.NPC
             {
                 if (!wasAggro)
                     m_avoidTimer = 0f;
-                ChasePlayer(flatToPlayer, dt);
+                ChasePlayer(flatToPlayer, flatDistance, dt);
                 return;
             }
 
@@ -1042,22 +1052,21 @@ namespace WhackySlappy.NPC
         /// side for up to kAvoidDuration. The NPC never pushes or
         /// damages the player; it just stops at m_attackRange.
         /// </summary>
-        private void ChasePlayer(Vector3 flatToPlayer, float dt)
+        private void ChasePlayer(
+            Vector3 flatDir, float flatDistance, float dt)
         {
             m_isWalking = true;
 
-            float distance = flatToPlayer.magnitude;
-
-            if (distance <= m_attackRange)
+            if (flatDistance <= m_attackRange)
             {
                 // In attack range: zero desired velocity (the same
                 // acceleration), still facing the player.
                 SteerWander(Vector3.zero, dt);
-                ApplyFacingTorque(flatToPlayer);
+                ApplyFacingTorque(flatDir);
                 return;
             }
 
-            Vector3 dir = flatToPlayer / distance;
+            Vector3 dir = flatDir;
 
             if (m_avoidTimer > 0f)
             {
@@ -1088,7 +1097,7 @@ namespace WhackySlappy.NPC
             SteerWander(dir * m_chaseSpeed, dt);
 
             // Face the player itself (not the detour heading).
-            ApplyFacingTorque(flatToPlayer);
+            ApplyFacingTorque(flatDir);
         }
 
         /// <summary>Rotate a flat direction in the XZ plane by a yaw
