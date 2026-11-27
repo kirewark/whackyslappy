@@ -63,6 +63,14 @@ namespace WhackySlappy.NPC
         [SerializeField] private float m_chaseSpeed = 2.4f;
         [SerializeField] private float m_attackRange = 1.6f;
 
+        /// <summary>Chase brake lead: the chase stop decision fires at
+        /// m_attackRange + clamp(horizontal speed * m_brakeLeadTime,
+        /// 0, m_brakeLeadMax), so the low-friction foot's momentum
+        /// settles the standstill near m_attackRange (which stays the
+        /// semantic strike range for TickStrike).</summary>
+        [SerializeField] private float m_brakeLeadTime = 0.25f;
+        [SerializeField] private float m_brakeLeadMax = 0.8f;
+
         /// <summary>Phase 6 strike telegraph angular accelerations
         /// (rad/s^2, AddTorque with ForceMode.Acceleration — mass
         /// independent) on both right arm ragdoll limbs (forearm at half
@@ -730,7 +738,7 @@ namespace WhackySlappy.NPC
             // Force is applied by the slap hand; here we only change state.
 
             m_state = State.Tumbling;
-            m_aggro = false;
+            ClearAggro();
             m_hitCooldownTimer = m_hitCooldown;
             m_settleTimer = 0f;
             m_tumbleTimer = 0f;
@@ -835,7 +843,7 @@ namespace WhackySlappy.NPC
             // must stay slap-able right after a trip.
             m_sweepCooldownTimer = m_sweepCooldown;
             m_state = State.Tumbling;
-            m_aggro = false;
+            ClearAggro();
             m_settleTimer = 0f;
             m_tumbleTimer = 0f;
 
@@ -942,6 +950,19 @@ namespace WhackySlappy.NPC
             m_visualPivot.localScale = Vector3.Scale(m_visualPivotBaseScale, s);
         }
 
+        /// <summary>
+        /// Knockdown/tumble aggro release: clears aggro and drops an
+        /// active Angry glare back to Idle immediately. Safe because
+        /// NpcFace.SetExpression's priority guard only lets Idle replace
+        /// Angry: Hit/Hurt/Dizzy/Dead faces are never overridden.
+        /// </summary>
+        private void ClearAggro()
+        {
+            m_aggro = false;
+            if (m_face != null)
+                m_face.SetExpression(NpcFace.Expression.Idle, 0f);
+        }
+
         // -------------------------------------------------------------------------
         // Wander logic
         // -------------------------------------------------------------------------
@@ -958,7 +979,7 @@ namespace WhackySlappy.NPC
                 m_settleTimer = 0f;
                 m_tumbleTimer = 0f;
                 m_isWalking = false;
-                m_aggro = false;
+                ClearAggro();
                 return; // no wander push while fallen
             }
 
@@ -978,7 +999,7 @@ namespace WhackySlappy.NPC
             float flatDistance = 0f;
             if (!AggroEnabled || player == null)
             {
-                m_aggro = false;
+                ClearAggro();
             }
             else
             {
@@ -1117,7 +1138,8 @@ namespace WhackySlappy.NPC
         /// Phase 5b chase (called only from UpdateWander while m_aggro):
         /// steer toward the player's XZ position with the shared
         /// SteerHorizontal acceleration at m_chaseSpeed, brake to a
-        /// standstill inside m_attackRange while keeping facing on the
+        /// standstill near m_attackRange (start braking a speed-dependent
+        /// lead time early) while keeping facing on the
         /// player, and detour around a blocked forward prop raycast by
         /// swinging the desired heading kAvoidAngleDeg to the first free
         /// side for up to kAvoidDuration. The NPC never pushes or
@@ -1128,10 +1150,18 @@ namespace WhackySlappy.NPC
         {
             m_isWalking = true;
 
-            if (flatDistance <= m_attackRange)
+            Vector3 chaseVel = m_rb.linearVelocity;
+            float horizSpeed =
+                new Vector3(chaseVel.x, 0f, chaseVel.z).magnitude;
+            float brakeDistance = m_attackRange + Mathf.Clamp(
+                horizSpeed * m_brakeLeadTime, 0f, m_brakeLeadMax);
+
+            if (flatDistance <= brakeDistance)
             {
-                // In attack range: zero desired velocity (the same
-                // acceleration), still facing the player.
+                // Inside the brake window: zero desired velocity (the same
+                // acceleration), still facing the player. The speed-based
+                // lead covers the low-friction foot's coasting, so the
+                // standstill lands near m_attackRange.
                 SteerWander(Vector3.zero, dt);
                 ApplyFacingTorque(flatDir);
                 return;

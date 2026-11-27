@@ -62,6 +62,52 @@ _Project/
 - Never force-push or rewrite history without explicit approval from the user.
 - Never put tokens or secrets in files, remote URLs, or commit messages.
 
+## CI and pipeline
+
+`.github/workflows/ci.yml` runs on every push, every branch:
+`lint` (GitHub-hosted) → `test` → `build-webgl` → `staging` → `screenshot`
+(the last four on the self-hosted Unity runner, a Proxmox VM).
+
+- `lint`: blocks committed Unity junk dirs, requires a `.meta` next to every asset and
+  folder under `Assets/`, and fails non-`kirewark` authors who touch `.github/`.
+- `test`: game-ci `unity-test-runner@v4.3.2`, `testMode: all` (EditMode + PlayMode;
+  roughly 38 EditMode and 3 PlayMode tests).
+- `build-webgl`: game-ci `unity-builder@v5.0.1`, target WebGL.
+- `staging`: rsyncs the build to the LAN web host; each branch plays at
+  `http://staging.lan/whacky/<branch>/` (the screenshot job reaches the same host at
+  `http://10.10.10.11/whacky/<branch>/`).
+- `screenshot`: headless Playwright boots the staged build (`screenshot.png`), then
+  takes photo-mode shots `?shot=overview|slap|getup` (4 frames each at 0.25/0.75/1.5/3 s).
+  Artifact `screenshots-<sha>` holds the frames, `smoke.json` telemetry and `summary.md`.
+
+## Agent workflow rules
+
+- Never edit anything under `.github/` (the `lint` job enforces this).
+- `ProjectSettings/` changes require the owner's explicit approval.
+- One branch + one PR per small task; merge only once `lint`, `test` and `build-webgl`
+  are green (branch protection on `main`).
+- Every new asset, script or folder needs a hand-written `.meta`: unique GUID from
+  `python3 -c "import uuid; print(uuid.uuid4().hex)"`, `fileFormatVersion: 2`. There is
+  no Editor to generate them, and lint fails without them.
+- New folders that have an asmdef also need an Editor-only asmdef for their `Editor/` folder.
+- Runtime materials only via `DefaultLitMaterial.Create()` (WebGL strips unused shaders).
+- URL query options the player reads: `?q=low|high|off` (graphics), `?fps=1` (fps
+  counter + telemetry), `?shot=overview|slap|getup` (photo mode).
+- Visual changes: before merging, review the screenshot frames AND the `smoke.json`
+  telemetry in the `screenshots-<sha>` artifact.
+
+## Gameplay facts (implemented, 2026-11)
+
+- Slap: hold left mouse to charge aim (drag steers the swing); mouse-look slows to 35%
+  while held. Right mouse = leg sweep.
+- NPC AI: wander → aggro inside 8 m (drops only past 13 m) → chase → telegraphed
+  no-damage strike (camera bump + whoosh sound).
+- Face expressions: Idle, Angry, Recover, Hurt, Hit, Dizzy, Dead.
+- Spawning: max 4 alive, one replacement every 3 s, ≥12 m from the player and ≥2.5 m
+  from corpses; max 6 corpses.
+- Spatial audio: logarithmic rolloff 2–45 m; NPC voice sources follow their NPC.
+- Arena props are combined into a few meshes to keep draw calls low.
+
 ## Hand-off notes for delegated agents
 
 - You do not see the orchestrator's conversation. This file and `Design.md` are your context.
