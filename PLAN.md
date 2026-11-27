@@ -45,10 +45,28 @@ Done when: a standing slap knocks an NPC about 3–5 m, and a running slap clear
 - [ ] D2 Decide the open questions in Design 12 (stay down for comedy? wobbly head joint? backhand swing?).
 
 ## Phase E — Ship pipeline (project goal)
-- [ ] E1 Use one scene: make `SampleScene` the only scene in Build Settings and rename it to `Arena`. (The play-test problem came from an Untitled scene.)
-- [ ] E2 Add a GitHub Actions workflow: GameCI `unity-builder` for the WebGL build, then deploy to GitHub Pages. This needs `UNITY_LICENSE`, `UNITY_EMAIL` and `UNITY_PASSWORD` in the repo secrets (the user must add them).
-- [ ] E3 Embed the playable build on the portfolio site.
-- [ ] E4 Check 60 fps in the WebGL build (Design 11).
+
+Status 2026-11-27: the `ci.yml` pipeline is live — lint → test → build-webgl → staging →
+screenshot, on a self-hosted Unity runner. The old E2 guess (GameCI + Pages deploy)
+landed in a different shape: license secrets are in place, deploy is LAN staging.
+
+- [x] E1a One scene in Build Settings (single `Assets/Scenes/SampleScene.unity`).
+- [ ] E1b Rename that scene to `Arena` (needs the Editor, so owner-side).
+- [x] E2 GitHub Actions workflow: `lint` (junk dirs, .meta coverage, no `.github/` edits
+  by agents) + game-ci `unity-test-runner@v4.3.2` / `unity-builder@v5.0.1`; the
+  `UNITY_LICENSE/EMAIL/PASSWORD` secrets are set.
+- [x] E3 WebGL build per push (`build-webgl`), artifact `webgl-<sha>`.
+- [x] E4 Staging deploy: every branch plays on the LAN at
+  `http://staging.lan/whacky/<branch>/`.
+- [x] E5 Screenshot gate: Playwright boot check + `?shot=overview|slap|getup` frames and
+  `smoke.json` telemetry; artifact `screenshots-<sha>`.
+- [ ] E6 Deploy `main` to GitHub Pages (public playable build).
+- [ ] E7 Embed the playable build on the portfolio site.
+- [ ] E8 Release job: tag + release artifacts on merge to `main`.
+- [ ] E9 WebGL load-time budget + build compression (the decompression fallback changes
+  `ProjectSettings/` → needs owner approval).
+- [ ] E10 CI performance budget check from the `?fps=1` telemetry (Design 11: 60 fps).
+- [ ] E11 Strike/kill photo shot: the owner adds the scenario to the CI `SHOTS` list.
 
 ## Order
 A (A5 first if blind) → B → user play test → C → D → E. Phase E can run in parallel any time after A.
