@@ -204,6 +204,17 @@ namespace WhackySlappy.NPC
         /// no old value (there was no tumble gravity boost before).</summary>
         [SerializeField] private float m_tumbleGravityMultiplier = 1.7f;
 
+        // Hit-location zones (feedback A, see ApplyHitHeightReaction) and
+        // upward-launch gravity grace in physics seconds (feedback B).
+        [SerializeField] private float m_npcHeight = 1.7f;    // feet to head-top
+        [SerializeField] private float m_headHitHeight = 0.78f;  // head zone floor
+        [SerializeField] private float m_lowHitHeight = 0.35f;   // trip zone ceiling
+        [SerializeField] private float m_headHitTorque = 2.5f;   // whiplash, x strength
+        [SerializeField] private float m_headHitKick = 0.3f;     // x impulse, limbs+root
+        [SerializeField] private float m_lowHitFootKick = 0.5f;  // x impulse, at feet
+        [SerializeField] private float m_lowHitTopple = 1.8f;    // topple, x strength
+        [SerializeField] private float m_launchGravityGraceTime = 0.35f; // physics seconds
+
         /// <summary>Angular damping used at spawn and in every non-Tumbling
         /// state (0.5f, the old value kept as a field so the Tumbling raise
         /// below can restore it on state change). Linear damping (0.1f) is
@@ -349,6 +360,9 @@ namespace WhackySlappy.NPC
         // Silly physics: post-launch hang-time countdown in physics seconds;
         // while > 0, part of this NPC's gravity is cancelled in FixedUpdate.
         private float m_hangTimer = 0f;
+
+        // Upward-launch grace countdown, cleared like m_hangTimer.
+        private float m_launchGravityGraceTimer = 0f;
 
         // Silly physics: bounce material created once in Start; its
         // bounciness tracks SillyPhysics.BounceFactor each physics tick.
@@ -604,6 +618,9 @@ namespace WhackySlappy.NPC
             if (m_sweepCooldownTimer > 0f)
                 m_sweepCooldownTimer -= Time.fixedDeltaTime;
 
+            if (m_launchGravityGraceTimer > 0f)
+                m_launchGravityGraceTimer -= Time.fixedDeltaTime;
+
             // Knockdown window countdown. While it runs, Tumbling stays
             // pure physics (no self-righting), so the body lies flat.
             if (m_knockdownTimer > 0f)
@@ -655,7 +672,8 @@ namespace WhackySlappy.NPC
             // than the old floaty arc. Skipped while the hang counter-force
             // above is live (same tick) so the hang window still reads as
             // impact hang; GettingUp is near-grounded, so recovery untouched.
-            if (m_state == State.Tumbling && !hangActive)
+            if (m_state == State.Tumbling && !hangActive
+                && m_launchGravityGraceTimer <= 0f)
             {
                 m_rb.AddForce(Physics.gravity
                     * (m_rb.mass * (m_tumbleGravityMultiplier - 1f)), ForceMode.Force);
@@ -731,6 +749,7 @@ namespace WhackySlappy.NPC
                 if (contacts[i].normal.y > 0.5f)
                 {
                     m_hangTimer = 0f;
+                    m_launchGravityGraceTimer = 0f; // landed: fall resumes
                     return;
                 }
             }
@@ -873,6 +892,19 @@ namespace WhackySlappy.NPC
                     // Weight pass B: flail the limbs and kick a topple
                     // spin onto the root (see ApplyLimbHitReaction).
                     ApplyLimbHitReaction(in hit);
+
+                    // Feedback A: height-zoned reaction atop the baseline.
+                    ApplyHitHeightReaction(hit.Point, hit.Impulse, hit.Strength);
+
+                    // Feedback B: upward slap -> suspend the tumble-gravity
+                    // bonus and hold hang >= 0.25 s while the grace runs.
+                    float impMag = hit.Impulse.magnitude;
+                    if (impMag > 1e-6f && hit.Impulse.y > 0.35f * impMag)
+                    {
+                        m_launchGravityGraceTimer = m_launchGravityGraceTime;
+                        m_hangTimer = Mathf.Max(m_hangTimer, 0.25f);
+                    }
+
                     NpcVoice.Yelp(transform.position, hit.Strength, transform);
                     // Facial reaction only for accepted hits; cooldown-gated
                     // slaps stay expression-free. m_face is a MonoBehaviour:
@@ -1411,6 +1443,53 @@ namespace WhackySlappy.NPC
             return m_limbRbs;
         }
 
+        /// <summary>Feedback A: zone accepted slaps by contact height over
+        /// the feet. Head: whiplash torque + downward-flipped spin +
+        /// limb/root kick (head has no Rigidbody). Mid: baseline. Low:
+        /// foot kick at the feet + topple; needs a horizontal impulse.</summary>
+        private void ApplyHitHeightReaction(Vector3 point, Vector3 impulse, float strength)
+        {
+            float mag = impulse.magnitude;
+            if (mag <= 1e-6f)
+                return;
+
+            float feetY = m_rb.position.y - m_feetHalfHeight;
+            float h = Mathf.InverseLerp(feetY, feetY + m_npcHeight, point.y);
+
+            if (h >= m_headHitHeight)
+            {
+                // Head snap: extra topple past the baseline.
+                m_rb.AddTorque(Vector3.Cross(Vector3.up, impulse / mag)
+                    * (strength * m_headHitTorque), ForceMode.Impulse);
+                // Downward-flipped spin adds to the baseline spin.
+                Vector3 spin = Random.onUnitSphere * (SillyPhysics.SpinTorque * strength);
+                spin.y = -Mathf.Abs(spin.y);
+                m_rb.AddTorque(spin, ForceMode.Impulse);
+                // No head Rigidbody: kick limbs and root along the impulse.
+                Vector3 kick = impulse * m_headHitKick;
+                Rigidbody[] limbs = GetLimbRbs();
+                for (int i = 0; i < limbs.Length; i++)
+                {
+                    if (limbs[i] == null || limbs[i].isKinematic)
+                        continue;
+                    limbs[i].AddForce(kick, ForceMode.Impulse);
+                }
+                m_rb.AddForce(kick, ForceMode.Impulse);
+            }
+            else if (h < m_lowHitHeight)
+            {
+                // Leg trip: kick the feet out, then topple along the impact.
+                Vector3 dirH = new Vector3(impulse.x, 0f, impulse.z);
+                if (dirH.sqrMagnitude <= 1e-12f)
+                    return;
+                dirH.Normalize();
+                m_rb.AddForceAtPosition(dirH * (mag * m_lowHitFootKick),
+                    m_rb.position - Vector3.up * m_feetHalfHeight, ForceMode.Impulse);
+                m_rb.AddTorque(Vector3.Cross(Vector3.up, dirH)
+                    * (strength * m_lowHitTopple), ForceMode.Impulse);
+            }
+        }
+
         /// <summary>Lazily caches the Rigidbody of the "Arm_R_Lower" limb
         /// that NpcBodyBuilder.AddLimbs builds under the NPC root (same
         /// null-safe lookup as the upper arm).</summary>
@@ -1677,6 +1756,7 @@ namespace WhackySlappy.NPC
             // straight down; the knockdown/settle/tumble timers no longer
             // matter because the Dead state skips every transition check.
             m_hangTimer = 0f;
+            m_launchGravityGraceTimer = 0f;
             m_tumbleTimer = 0f;
 
             // Weight pass B: Dead runs no upright/facing/wander/strike
@@ -1770,6 +1850,7 @@ namespace WhackySlappy.NPC
             // Silly physics: clear hang time and any live squash pulse so a
             // recycled NPC spawns at rest and visually neutral.
             m_hangTimer = 0f;
+            m_launchGravityGraceTimer = 0f;
             m_squashActive = false;
             if (m_visualPivot != null)
                 m_visualPivot.localScale = m_visualPivotBaseScale;
