@@ -379,6 +379,10 @@ namespace WhackySlappy.NPC
         // fire in one tick, which would double-notify the spawner.
         private bool m_despawned = false;
 
+        // Voice band picked once in Awake and kept across pool recycles.
+        private VoiceTier m_voiceTier;
+        private bool m_voiceTierRolled = false;
+
         // Health and death (Phase 2b): starts at NpcDamage.MaxHealth and
         // drops per accepted slap; 0 means dead. m_isDead doubles as the
         // Die() re-entry guard and the gate that turns every later OnHit
@@ -428,6 +432,15 @@ namespace WhackySlappy.NPC
             m_baseMaxAngularVelocity = m_rb.maxAngularVelocity;
             // Plan A1: lower center of mass so gravity doesn't tip the NPC.
             ApplyLowCenterOfMass();
+
+            // Pick the voice band once per lifetime: Low 0.3, Mid 0.4, High 0.3.
+            if (!m_voiceTierRolled)
+            {
+                m_voiceTierRolled = true;
+                float voiceRoll = Random.value;
+                m_voiceTier = voiceRoll < 0.3f ? VoiceTier.Low
+                          : voiceRoll < 0.7f ? VoiceTier.Mid : VoiceTier.High;
+            }
         }
 
         /// <summary>
@@ -853,7 +866,7 @@ namespace WhackySlappy.NPC
                 if (m_hitCooldownTimer > 0f || m_sweepCooldownTimer > 0f)
                     return;
                 OnSwept(in hit);
-                NpcVoice.Yelp(transform.position, hit.Strength, transform);
+                NpcVoice.Yelp(transform.position, hit.Strength, transform, m_voiceTier);
 
                 // Scoring: the sweep passed both cooldown gates, so it is
                 // an accepted hit (isSweep = true for the half value).
@@ -873,7 +886,7 @@ namespace WhackySlappy.NPC
                     // Weight pass B: flail the limbs and kick a topple
                     // spin onto the root (see ApplyLimbHitReaction).
                     ApplyLimbHitReaction(in hit);
-                    NpcVoice.Yelp(transform.position, hit.Strength, transform);
+                    NpcVoice.Yelp(transform.position, hit.Strength, transform, m_voiceTier);
                     // Facial reaction only for accepted hits; cooldown-gated
                     // slaps stay expression-free. m_face is a MonoBehaviour:
                     // explicit null check, never ?..
