@@ -26,17 +26,19 @@ namespace WhackySlappy.Core
         public const float SpinTorqueAt0 = 0.0f;
         public const float SpinTorqueAt1 = 2.2f;
 
+        // Weight pass A (owner: "floaty" feel): hang window shortened and
+        // gravity cancel weakened, old -> new in each comment.
         public const float HangTimeAt0 = 0.0f;
-        public const float HangTimeAt1 = 0.2f;
+        public const float HangTimeAt1 = 0.06f; // 0.2f -> 0.06f
 
         public const float HangGravityScaleAt0 = 1.0f;
-        public const float HangGravityScaleAt1 = 0.7f;
+        public const float HangGravityScaleAt1 = 0.85f; // 0.7f -> 0.85f
 
         public const float MaxSpeedAt0 = 12.0f;
         public const float MaxSpeedAt1 = 13.0f;
 
         public const float BounceFactorAt0 = 0.0f;
-        public const float BounceFactorAt1 = 0.35f;
+        public const float BounceFactorAt1 = 0.12f; // 0.35f -> 0.12f (weight pass A: less bouncy)
 
         public const float SquashAmountAt0 = 0.0f;
         public const float SquashAmountAt1 = 0.25f;
@@ -51,11 +53,13 @@ namespace WhackySlappy.Core
         public static float SpinTorque =>
             Mathf.Lerp(SpinTorqueAt0, SpinTorqueAt1, Mathf.Clamp01(Silliness));
 
-        /// <summary>Duration (s) of the low-gravity hang window after a launch (0 .. 0.2).</summary>
+        /// <summary>Duration (s) of the low-gravity hang window after a launch
+        /// (0 .. 0.06; weight pass A: was 0 .. 0.2).</summary>
         public static float HangTimeSeconds =>
             Mathf.Lerp(HangTimeAt0, HangTimeAt1, Mathf.Clamp01(Silliness));
 
-        /// <summary>Fraction of gravity felt during the hang window (1 .. 0.7).</summary>
+        /// <summary>Fraction of gravity felt during the hang window
+        /// (1 .. 0.85; weight pass A: was 1 .. 0.7).</summary>
         public static float HangGravityScale =>
             Mathf.Lerp(HangGravityScaleAt0, HangGravityScaleAt1, Mathf.Clamp01(Silliness));
 
@@ -63,8 +67,9 @@ namespace WhackySlappy.Core
         public static float MaxSpeed =>
             Mathf.Lerp(MaxSpeedAt0, MaxSpeedAt1, Mathf.Clamp01(Silliness));
 
-        /// <summary>Bounciness of the NPC body PhysicsMaterial (0 .. 0.35);
-        /// 0 at Silliness 0 keeps the NPC at default (non-bouncy) physics.</summary>
+        /// <summary>Bounciness of the NPC body PhysicsMaterial (0 .. 0.12;
+        /// weight pass A: was 0 .. 0.35). 0 at Silliness 0 keeps the NPC at
+        /// default (non-bouncy) physics.</summary>
         public static float BounceFactor =>
             Mathf.Lerp(BounceFactorAt0, BounceFactorAt1, Mathf.Clamp01(Silliness));
 

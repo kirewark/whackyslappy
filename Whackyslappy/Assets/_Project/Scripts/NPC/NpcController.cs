@@ -190,6 +190,31 @@ namespace WhackySlappy.NPC
         [SerializeField] private float m_knockdownTime = 1.6f;
 
         // -------------------------------------------------------------------------
+        // Weight pass A (owner feedback: "floaty"). Global gravity lives in
+        // ProjectSettings (-9.81) and must not be changed, so weight is added
+        // per body: extra downward force while airborne and stronger angular
+        // damping while tumbling.
+        // -------------------------------------------------------------------------
+
+        /// <summary>Effective gravity multiplier while Tumbling: an extra
+        /// (multiplier - 1) x gravity of downward force is added every
+        /// physics tick so falls land sooner and read heavier (1 = normal
+        /// gravity). Skipped while the silly hang counter-force is active so
+        /// the hang window still reads as impact hang. New in weight pass A;
+        /// no old value (there was no tumble gravity boost before).</summary>
+        [SerializeField] private float m_tumbleGravityMultiplier = 1.7f;
+
+        /// <summary>Angular damping used at spawn and in every non-Tumbling
+        /// state (0.5f, the old value kept as a field so the Tumbling raise
+        /// below can restore it on state change). Linear damping (0.1f) is
+        /// untouched.</summary>
+        [SerializeField] private float m_spawnAngularDamping = 0.5f;
+
+        /// <summary>Angular damping while Tumbling (raised from 0.5f to 0.9f
+        /// in weight pass A) so flung bodies stop windmilling and settle.</summary>
+        [SerializeField] private float m_tumblingAngularDamping = 0.9f;
+
+        // -------------------------------------------------------------------------
         // Silly physics (Pass 2, Phase 4). All lerp endpoints for the feel
         // multipliers live in SillyPhysics; these are NPC-local values.
         // -------------------------------------------------------------------------
@@ -396,7 +421,7 @@ namespace WhackySlappy.NPC
             m_rb = GetComponent<Rigidbody>();
             m_rb.mass = 1.5f;
             m_rb.linearDamping = 0.1f;
-            m_rb.angularDamping = 0.5f;
+            m_rb.angularDamping = m_spawnAngularDamping; // 0.5f; raised only while Tumbling
             m_rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
             // Silly physics: remember the spawn angular-velocity cap so the
             // spin boost is relative to it (returns to it at Silliness 0).
@@ -601,15 +626,39 @@ namespace WhackySlappy.NPC
             m_rb.maxAngularVelocity = m_baseMaxAngularVelocity
                 + SillyPhysics.SpinTorque * kSpinAngularVelocityBonus;
 
+            // Weight pass A: raise angular damping to m_tumblingAngularDamping
+            // (0.5 -> 0.9) only while Tumbling so flung bodies stop
+            // windmilling and settle; restored outside Tumbling (GettingUp,
+            // Wander, Dead, recycle). Written per tick in the same style as
+            // the spin cap and bounce material sync below, which covers every
+            // state-change site (slap, sweep, tilt-fall, settle, max-tumble,
+            // die, reset) with no per-site bookkeeping.
+            m_rb.angularDamping = m_state == State.Tumbling
+                ? m_tumblingAngularDamping
+                : m_spawnAngularDamping;
+
             // Silly physics: hang time is applied as a counter-force instead
             // of toggling useGravity, so contacts and sleeping stay intact.
             // Cancels (1 - HangGravityScale) of gravity; plain arithmetic,
             // GC-free. At Silliness 0 the cancel term is exactly 0.
+            bool hangActive = m_hangTimer > 0f;
             if (m_hangTimer > 0f)
             {
                 m_hangTimer -= Time.fixedDeltaTime;
                 float cancel = m_rb.mass * (1f - SillyPhysics.HangGravityScale);
                 m_rb.AddForce(-Physics.gravity * cancel, ForceMode.Force);
+            }
+
+            // Weight pass A: heavier falls. While airborne in State.Tumbling,
+            // add an extra (multiplier - 1) x gravity of downward force
+            // (mass-scaled, ForceMode.Force) so the descent reads snappier
+            // than the old floaty arc. Skipped while the hang counter-force
+            // above is live (same tick) so the hang window still reads as
+            // impact hang; GettingUp is near-grounded, so recovery untouched.
+            if (m_state == State.Tumbling && !hangActive)
+            {
+                m_rb.AddForce(Physics.gravity
+                    * (m_rb.mass * (m_tumbleGravityMultiplier - 1f)), ForceMode.Force);
             }
 
             // Keep the one-shot bounce material in sync with the master
