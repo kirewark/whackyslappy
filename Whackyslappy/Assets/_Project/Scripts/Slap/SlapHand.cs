@@ -128,8 +128,9 @@ namespace WhackySlappy.Slap
         [SerializeField] private float m_dragMinHitSpeed = 1.2f;
 
         /// <summary>Seconds an NPC must wait before a drag can hit it
-        /// again inside the same hold.</summary>
-        [SerializeField] private float m_dragRehitCooldown = 0.35f;
+        /// again inside the same hold. Every other contact lands: a new
+        /// NPC is never gated, this one re-hits after the gate.</summary>
+        [SerializeField] private float m_dragRehitCooldown = 0.2f;
 
         /// <summary>Euler angles (deg) applied to the hand model root so the
         /// Inspector can fix the model's facing if the rest pose looks wrong.
@@ -205,10 +206,11 @@ namespace WhackySlappy.Slap
         private readonly RaycastHit[] m_sphereCastBuffer = new RaycastHit[32];
         private readonly Collider[] m_overlapBuffer = new Collider[32];
 
-        // Drag-contact dedupe/cooldown: separate from the release-swing
-        // dedupe (m_hitThisSwing) so the release strike can still hit an
-        // NPC the drag already struck. Reused containers, cleared on press.
-        private readonly HashSet<Rigidbody> m_hitThisDrag = new();
+        // Drag-contact re-hit gate (per NPC, not per hold): every distinct
+        // contact during one hold lands, but the same NPC cannot be
+        // machine-gunned every physics tick. Separate from the release-
+        // swing dedupe (m_hitThisSwing), so the release strike can still
+        // hit an NPC the drag already struck. Reused, cleared on press.
         private readonly Dictionary<Rigidbody, float> m_dragRehitAt = new();
 
         private void Awake()
@@ -441,14 +443,16 @@ namespace WhackySlappy.Slap
                     continue;
                 rb = ResolveNpcRoot(kvp.Key, rb);
 
-                // One strike per NPC per hold, plus a short re-hit gate so
-                // a hand parked against an NPC but wiggling still works.
-                if (m_hitThisDrag.Contains(rb))
-                    continue;
+                // Only the short per-NPC gate limits drag hits: a hand
+                // sweeping back at an NPC it already struck hits it again
+                // after m_dragRehitCooldown, inside the same hold. The
+                // gate (Time.time, scaled like every other timestamp
+                // here, hit-stop consistent) prevents machine-gunning the
+                // same NPC every physics tick; any other NPC is unhurt by
+                // it and lands immediately.
                 if (m_dragRehitAt.TryGetValue(rb, out float nextAllowed)
                     && now < nextAllowed)
                     continue;
-                m_hitThisDrag.Add(rb);
                 m_dragRehitAt[rb] = now + m_dragRehitCooldown;
 
                 float rawMagnitude =
@@ -506,10 +510,9 @@ namespace WhackySlappy.Slap
                     m_aiming = true;
                     m_pressTime = Time.unscaledTime; // hold-time gate
                     InputReader.ResetAim();
-                    // Fresh drag strike window: clear the drag dedupe and
-                    // re-hit cooldown, and re-capture the hand position so
-                    // the first drag tick has no phantom delta.
-                    m_hitThisDrag.Clear();
+                    // Fresh drag strike window: clear the per-NPC re-hit
+                    // cooldowns, and re-capture the hand position so the
+                    // first drag tick has no phantom delta.
                     m_dragRehitAt.Clear();
                     m_prevWorldPos = transform.position;
                     if (Player != null)
@@ -713,9 +716,9 @@ namespace WhackySlappy.Slap
             m_phase = SwingPhase.Active;
             m_directional = false;
             m_hitThisSwing.Clear();
-            // Release strike starts: drop the drag dedupe so an NPC the
-            // drag already struck can still be hit by this swing.
-            m_hitThisDrag.Clear();
+            // The release strike dedupes only in m_hitThisSwing, and the
+            // drag gate (m_dragRehitAt) never consults it, so an NPC the
+            // drag already struck during the hold can still be hit now.
         }
 
         /// <summary>
