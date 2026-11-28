@@ -34,10 +34,10 @@ namespace WhackySlappy.Tests.EditMode
             SillyPhysics.Silliness = 1f;
             Assert.That(SillyPhysics.ImpulseMultiplier, Is.EqualTo(1.15f).Within(1e-5f));
             Assert.That(SillyPhysics.SpinTorque, Is.EqualTo(2.2f).Within(1e-5f));
-            Assert.That(SillyPhysics.HangTimeSeconds, Is.EqualTo(0.2f).Within(1e-5f));
-            Assert.That(SillyPhysics.HangGravityScale, Is.EqualTo(0.7f).Within(1e-5f));
+            Assert.That(SillyPhysics.HangTimeSeconds, Is.EqualTo(0.06f).Within(1e-5f));
+            Assert.That(SillyPhysics.HangGravityScale, Is.EqualTo(0.85f).Within(1e-5f));
             Assert.That(SillyPhysics.MaxSpeed, Is.EqualTo(13.0f).Within(1e-5f));
-            Assert.That(SillyPhysics.BounceFactor, Is.EqualTo(0.35f).Within(1e-5f));
+            Assert.That(SillyPhysics.BounceFactor, Is.EqualTo(0.12f).Within(1e-5f));
             Assert.That(SillyPhysics.SquashAmount, Is.EqualTo(0.25f).Within(1e-5f));
         }
 
