@@ -198,6 +198,10 @@ namespace WhackySlappy.Core
             // FirstPersonController gets input reader via GetComponent.
             var fps = playerObj.AddComponent<FirstPersonController>();
 
+            // Visual-only NPC-like body (torso + legs, no arms), child of
+            // the root so it yaws with the body and ignores camera pitch.
+            playerObj.AddComponent<PlayerBody>();
+
             // Camera rig at eye height (1.6). Pitch the rig, not the player.
             var cameraRig = new GameObject("CameraRig");
             cameraRig.transform.SetParent(playerObj.transform, false);
