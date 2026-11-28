@@ -6,9 +6,11 @@ using WhackySlappy.Player;
 namespace WhackySlappy.Core
 {
     /// <summary>
-    /// Hit feedback: camera kick (pitch/roll) and optional hit-stop.
+    /// Hit feedback: camera kick (pitch/roll) and hit-stop.
     /// Design 3.7: ~1-2 degrees, recovers in 0.1 s.
-    /// Optional hit-stop: timeScale 0.05 for ~0.04 s, toggled with F1.
+    /// Hit-stop (default on, toggled with F1): timeScale 0.05 for ~0.05 s,
+    /// but only for strong hits (strength >= m_hitStopMinStrength); weak
+    /// hits get the kick without freezing time.
     /// Lives on the camera pivot. In LateUpdate it reads the controller's
     /// base pitch and adds a decaying kick offset on top, after the FPS
     /// controller has written its pose in Update, so the two never fight.
@@ -16,8 +18,9 @@ namespace WhackySlappy.Core
     public class HitFeedback : MonoBehaviour
     {
         /// <summary>
-        /// Strength floor: even a zero-strength hit gets a visible kick
-        /// and hit-stop, so weak hits never feel like dead inputs.
+        /// Strength floor: even a zero-strength hit gets a visible kick,
+        /// so weak hits never feel like dead inputs. Hit-stop is gated
+        /// separately by m_hitStopMinStrength (weight pass A).
         /// </summary>
         private const float MinStrength = 0.25f;
 
@@ -33,7 +36,13 @@ namespace WhackySlappy.Core
         [Header("Hit-Stop")]
         [SerializeField] private bool m_hitStopEnabled = true;
         [SerializeField] private float m_hitStopTimeScale = 0.05f;
-        [SerializeField] private float m_hitStopDuration = 0.04f;
+        [SerializeField] private float m_hitStopDuration = 0.05f; // 0.04 -> 0.05 (weight pass A)
+
+        /// <summary>Minimum hit strength that triggers hit-stop (weight pass
+        /// A: freezes only punctuate strong hits; weak hits just kick the
+        /// camera). Compared against the floored strength (MinStrength 0.25
+        /// floor stays below this gate).</summary>
+        [SerializeField] private float m_hitStopMinStrength = 0.6f;
 
         private FirstPersonController m_player;
         private float m_currentKickPitch;
@@ -79,16 +88,18 @@ namespace WhackySlappy.Core
             m_kickElapsed = 0f;
             m_kickActive = true;
 
-            // Hit-stop: a new hit restarts the timer. Stopping the running
-            // coroutine skips its restore line, but m_inHitStop stays true,
-            // so the restart keeps the real timeScale and stays frozen.
+            // Hit-stop: a new strong hit restarts the timer. Stopping the
+            // running coroutine skips its restore line, but m_inHitStop
+            // stays true, so the restart keeps the real timeScale and stays
+            // frozen. Weak hits (or F1-off) take the else branch and end any
+            // freeze early rather than starting one.
             if (m_hitStopCoroutine != null)
             {
                 StopCoroutine(m_hitStopCoroutine);
                 m_hitStopCoroutine = null;
             }
 
-            if (m_hitStopEnabled)
+            if (m_hitStopEnabled && strength >= m_hitStopMinStrength)
             {
                 m_hitStopCoroutine = StartCoroutine(HitStopCoroutine());
             }
