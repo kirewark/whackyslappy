@@ -20,3 +20,7 @@ Royalty-free sound effects (no attribution required). Each clip was trimmed, mix
 | Ouch/Ouch_06.wav | freesound_community-accidentally-punching-the-floor-99814.mp3 | 0.628-1.100 |
 | Ouch/Oof_01.wav | freesound_community-homemadeoof-47509.mp3 | 0.046-0.511 |
 | Ouch/Aah_01.wav | valus-aa-219922.mp3 | 0.330-0.980 |
+
+## Pitch variants
+
+Each Ouch/ clip has `_Low` (-4 semitones) and `_High` (+4 semitones) versions, made with Rubber Band pitch shifting (same length, formants shifted with the pitch) and level-matched to the originals. The unsuffixed original is the mid version.
