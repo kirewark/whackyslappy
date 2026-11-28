@@ -5,11 +5,12 @@ namespace WhackySlappy.Core
 {
     /// <summary>
     /// Top-right score HUD drawn with OnGUI: a large 'SCORE 1200' line,
-    /// a 'COMBO x3' line shown only while the last kill's combo window is
-    /// still open, and a small 'KOs 7' line. Kills arrive through the
-    /// static NpcController.AnyDied event and are scored by a plain
-    /// ScoreKeeper. Label strings are rebuilt only when a value changes,
-    /// so the draw pass itself allocates nothing per frame.
+    /// a 'COMBO x3' line shown only while the last hit's combo window is
+    /// still open, and a small 'KOs 7' line. Accepted hits and kills
+    /// arrive through the static NpcController.AnyHit / AnyDied events
+    /// and are scored by a plain hit-based ScoreKeeper. Label strings
+    /// are rebuilt only when a value changes, so the draw pass itself
+    /// allocates nothing per frame.
     /// </summary>
     public class ScoreHud : MonoBehaviour
     {
@@ -49,16 +50,23 @@ namespace WhackySlappy.Core
         private void OnEnable()
         {
             NpcController.AnyDied += OnNpcDied;
+            NpcController.AnyHit += OnNpcHit;
         }
 
         private void OnDisable()
         {
             NpcController.AnyDied -= OnNpcDied;
+            NpcController.AnyHit -= OnNpcHit;
         }
 
         private void OnNpcDied(NpcController npc)
         {
             Keeper.RegisterKill(Time.time);
+        }
+
+        private void OnNpcHit(NpcController npc, float strength, bool isSweep)
+        {
+            Keeper.RegisterHit(strength, isSweep, Time.time);
         }
 
         private void OnGUI()

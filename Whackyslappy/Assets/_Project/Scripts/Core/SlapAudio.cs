@@ -60,8 +60,9 @@ namespace WhackySlappy.Core
 
         [Header("Spatial Rolloff")]
         // Unity defaults (min 1 / max 500) barely attenuate distant sounds.
+        // maxDistance is also the hard-silence point of the custom curve.
         [SerializeField] private float m_minDistance = 2f;
-        [SerializeField] private float m_maxDistance = 45f;
+        [SerializeField] private float m_maxDistance = 40f;
 
         // Static mirrors of the tuning fields: static Play cannot read
         // instance fields directly. Awake copies them from the component.
@@ -87,7 +88,7 @@ namespace WhackySlappy.Core
         private static float s_realClipMaxPitch = 1.08f;
         private static float s_realClipVolumeFloor = 0.35f;
         private static float s_minDistance = 2f;
-        private static float s_maxDistance = 45f;
+        private static float s_maxDistance = 40f;
 
         private const float TwoPi = 2f * Mathf.PI;
 
@@ -115,6 +116,18 @@ namespace WhackySlappy.Core
         }
         private static readonly List<FollowEntry> s_followers = new();
 
+        // Custom rolloff curve, built once in RolloffCurve() and shared by
+        // every pooled source. It is a plain managed object, so unlike the
+        // clips/pool sources it must be nulled here for re-tuned distances.
+        private static AnimationCurve s_rolloffCurve;
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+        // ?audiodebug=1 gate (same URL plumbing as FpsCounter), read once
+        // when the first pooled source is configured.
+        private static bool s_audioDebugRead;
+        private static bool s_audioDebug;
+#endif
+
         // Clears cached Unity objects on every domain reload: pool sources
         // and baked clips are destroyed with the previous play session but
         // the statics survive, leaving missing-reference entries (same
@@ -124,6 +137,7 @@ namespace WhackySlappy.Core
         {
             s_sourcePool.Clear();
             s_followers.Clear();
+            s_rolloffCurve = null;
             s_slapLight = null;
             s_slapHard = null;
             s_sillyLayerWithRealClips = false;
@@ -322,17 +336,58 @@ namespace WhackySlappy.Core
         }
 
         // One place that makes every pooled source spatial with real
-        // distance rolloff: logarithmic attenuation between tunable
-        // min/max distances, no doppler (moving sources are hand-tracked)
-        // and no stereo spread. Called from both pool creation sites.
+        // distance rolloff. Unity's Logarithmic mode ignores maxDistance
+        // and follows a gentle 1/d law (gain ~0.2 at ten times the min
+        // distance), which with loud normalized clips plus volume floors
+        // made near and far hits sound the same. Custom mode instead
+        // applies a cached curve over the normalized axis, so distant
+        // sounds reach hard silence at maxDistance. No doppler (moving
+        // sources are hand-tracked), no stereo spread, spatializer off.
+        // Called from both pool creation sites.
         private static void ConfigureSource(AudioSource src)
         {
             src.spatialBlend = 1f;
-            src.rolloffMode = AudioRolloffMode.Logarithmic;
+            src.rolloffMode = AudioRolloffMode.Custom;
+            src.SetCustomCurve(AudioSourceCurveType.CustomRolloff, RolloffCurve());
             src.minDistance = s_minDistance;
             src.maxDistance = s_maxDistance;
             src.dopplerLevel = 0f;
             src.spread = 0f;
+            src.spatialize = false;
+#if UNITY_WEBGL && !UNITY_EDITOR
+            if (!s_audioDebugRead)
+            {
+                s_audioDebugRead = true;
+                s_audioDebug = GraphicsQuality.QueryValue(
+                    Application.absoluteURL, "audiodebug") == "1";
+            }
+            if (s_audioDebug)
+                Debug.Log($"SlapAudio source: mode={src.rolloffMode}, " +
+                    $"min={src.minDistance:F1}, max={src.maxDistance:F1}, " +
+                    $"blend={src.spatialBlend:F1}, spread={src.spread:F1}, " +
+                    $"spatialize={src.spatialize}");
+#endif
+        }
+
+        // Custom rolloff curve, built once from the tuned distances and
+        // shared by every source. Unity evaluates Custom curves over the
+        // normalized axis: time 0..1 maps 0..maxDistance metres, the value
+        // is the volume gain. Flat until the min-distance knee (which
+        // doubles as the reference radius), then a steep falloff that
+        // reaches silence exactly at maxDistance. Zero tangents on every
+        // key keep the spline from overshooting below 0 or above 1.
+        private static AnimationCurve RolloffCurve()
+        {
+            if (s_rolloffCurve != null) return s_rolloffCurve;
+            float knee = Mathf.Clamp(
+                s_minDistance / Mathf.Max(0.01f, s_maxDistance), 0.001f, 0.17f);
+            s_rolloffCurve = new AnimationCurve(
+                new Keyframe(0.00f, 1.00f, 0.00f, 0.00f),
+                new Keyframe(knee, 1.00f, 0.00f, 0.00f),
+                new Keyframe(0.18f, 0.45f, 0.00f, 0.00f),
+                new Keyframe(0.45f, 0.12f, 0.00f, 0.00f),
+                new Keyframe(1.00f, 0.00f, 0.00f, 0.00f));
+            return s_rolloffCurve;
         }
 
         // Register, update or clear the follow entry for a source.

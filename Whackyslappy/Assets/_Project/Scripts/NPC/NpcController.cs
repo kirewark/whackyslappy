@@ -354,6 +354,7 @@ namespace WhackySlappy.NPC
         {
             AnyStrikeLanded = null;
             AnyDied = null;
+            AnyHit = null;
         }
 
         // -------------------------------------------------------------------------
@@ -700,6 +701,14 @@ namespace WhackySlappy.NPC
         /// ResetStaticState.</summary>
         public static event System.Action<NpcController> AnyDied;
 
+        /// <summary>Static mirror of one accepted hit on any NPC: fires
+        /// once per hit the NPC actually takes (with hit.Strength and
+        /// whether it was a leg sweep), so ScoreHud scores every hit
+        /// without per-NPC subscriptions. Cooldown-rejected hits and
+        /// hits on dead NPCs never fire it. Cleared at the start of each
+        /// play session by ResetStaticState.</summary>
+        public static event System.Action<NpcController, float, bool> AnyHit;
+
         /// <summary>Current strike timing phase (read-only; surfaced in the
         /// WebGL photo telemetry next to the aggro flag).</summary>
         public NpcStrikePhase StrikePhase => m_strike.Phase;
@@ -766,6 +775,10 @@ namespace WhackySlappy.NPC
                     return;
                 OnSwept(in hit);
                 NpcVoice.Yelp(transform.position, hit.Strength, transform);
+
+                // Scoring: the sweep passed both cooldown gates, so it is
+                // an accepted hit (isSweep = true for the half value).
+                AnyHit?.Invoke(this, hit.Strength, true);
             }
             else
             {
@@ -784,6 +797,10 @@ namespace WhackySlappy.NPC
                     // explicit null check, never ?..
                     if (m_face != null)
                         m_face.SetExpression(NpcFace.Expression.Hit, 0.8f);
+
+                    // Scoring: fired before health so the hit is always
+                    // counted, even when this same slap lands the kill.
+                    AnyHit?.Invoke(this, hit.Strength, false);
 
                     // Health (Phase 2b): an accepted slap subtracts
                     // NpcDamage damage; a sweep never reaches this branch,
