@@ -17,9 +17,9 @@ namespace WhackySlappy.NPC
         private const float ArmMass = 0.15f;
 
         // Leg proportions (metres). Slightly thicker so the legs read
-        // clearly next to the wide short torso.
-        private const float LegRadius = 0.13f;
-        private const float LegLength = 0.5f;
+        // clearly next to the wide short torso. internal for PlayerBody.
+        internal const float LegRadius = 0.13f;
+        internal const float LegLength = 0.5f;
         private const float LegMass = 0.25f;
 
         // Attachment points, relative to the npcRoot transform: the root
@@ -35,11 +35,11 @@ namespace WhackySlappy.NPC
         // hands end around y = -0.1, well above the feet.
         private const float ShoulderX = 0.42f;
         private const float ShoulderY = 0.8f;
-        private const float HipX = 0.25f;
-        private const float HipY = 0.1f;
+        internal const float HipX = 0.25f;
+        internal const float HipY = 0.1f;
 
         // How far lower segments overlap upper segments so joints have no gap.
-        private const float Overlap = 0.1f;
+        internal const float Overlap = 0.1f;
 
         // Joint anchor at the top of a capsule primitive. A capsule
         // primitive is 2 units tall in its own local space (before scaling),
