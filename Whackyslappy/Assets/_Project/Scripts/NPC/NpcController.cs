@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using WhackySlappy.Core;
 using WhackySlappy.Slap;
@@ -115,6 +116,25 @@ namespace WhackySlappy.NPC
         /// slap hit-cooldown so one sweep does not re-trip every physics tick
         /// while leaving the NPC still slap-able.</summary>
         [SerializeField] private float m_sweepCooldown = 0.3f;
+
+        /// <summary>Weight pass B: fraction of the slap impulse re-applied
+        /// to EVERY limb rigidbody on an accepted hit (limb flail), plus
+        /// the random tangential fraction added per limb so limbs do not
+        /// flail in lockstep. Both are Impulse-mode kg·m/s fractions of
+        /// the root impulse; 0 disables each.</summary>
+        [SerializeField] private float m_limbHitFraction = 0.12f;
+        [SerializeField] private float m_limbTangentialFraction = 0.03f;
+
+        /// <summary>Weight pass B: topple spin (Impulse-mode angular
+        /// impulse) kicked onto the root about the horizontal axis
+        /// perpendicular to the slap direction, scaled by hit.Strength
+        /// (0..1). Impulse torque on the mass-1.5 root; 0 disables.</summary>
+        [SerializeField] private float m_hitSpinTorque = 1.2f;
+
+        /// <summary>Weight pass B: one-time downward impulse (kg·m/s) on
+        /// the root at Die() so a standing corpse folds down into its
+        /// ragdoll instead of coasting upright on the kill momentum.</summary>
+        [SerializeField] private float m_deathSlumpImpulse = 1.5f;
 
         /// <summary>Kill height (y) below which the NPC despawns.</summary>
         [SerializeField] private float m_killHeight = -10.0f;
@@ -253,6 +273,16 @@ namespace WhackySlappy.NPC
         // "Arm_R_Upper" (jointed ragdoll child of the NPC root).
         private Rigidbody m_rightUpperArmRb;
         private Rigidbody m_rightLowerArmRb;
+
+        // Weight pass B: one-time (lazy) cache of every non-root Rigidbody
+        // under this NPC — the 8 jointed limb bodies from
+        // NpcBodyBuilder.AddLimbs (the head child has no rigidbody). Built
+        // once at the first accepted hit or death, reused by every later
+        // hit, so the per-hit flail loop never allocates. Spawner
+        // recycling reuses the same GameObject and limbs, so the cache
+        // stays valid across ResetToWander.
+        private Rigidbody[] m_limbRbs;
+        private bool m_limbCacheBuilt;
 
         /// <summary>Angle (deg) the chase heading swings around a blocked
         /// forward prop raycast and how long the detour holds; the probe
@@ -791,6 +821,9 @@ namespace WhackySlappy.NPC
                 if (accepted)
                 {
                     ApplyLaunchReaction(hit.Impulse, hit.Strength);
+                    // Weight pass B: flail the limbs and kick a topple
+                    // spin onto the root (see ApplyLimbHitReaction).
+                    ApplyLimbHitReaction(in hit);
                     NpcVoice.Yelp(transform.position, hit.Strength, transform);
                     // Facial reaction only for accepted hits; cooldown-gated
                     // slaps stay expression-free. m_face is a MonoBehaviour:
@@ -1270,6 +1303,65 @@ namespace WhackySlappy.NPC
             }
         }
 
+        /// <summary>
+        /// Weight pass B: physics reaction for one accepted slap hit,
+        /// called right after ApplyLaunchReaction. Wakes and flails every
+        /// cached limb rigidbody with a fraction of the root slap impulse
+        /// plus a small random tangential kick (WakeUp before forces per
+        /// the physics-feel rule: the ragdoll may have gone to sleep
+        /// between hits), then kicks a topple spin onto the root about
+        /// Cross(up, hit direction) — the horizontal axis that pitches the
+        /// body the way it was slapped. ForceMode.Impulse throughout (one
+        /// instantaneous push on the current physics step, not a
+        /// continuous Force push); the spin is skipped for sweeps, which
+        /// trip at the feet with their own topple torque. Allocation-free
+        /// after the one-time limb cache is built.</summary>
+        private void ApplyLimbHitReaction(in SlapHitInfo hit)
+        {
+            Vector3 impulse = hit.Impulse;
+            float mag = impulse.magnitude;
+            if (mag <= 1e-6f)
+                return;
+
+            Rigidbody[] limbs = GetLimbRbs();
+            for (int i = 0; i < limbs.Length; i++)
+            {
+                Rigidbody limb = limbs[i];
+                if (limb == null || limb.isKinematic)
+                    continue;
+                limb.WakeUp();
+                limb.AddForce(
+                    impulse * m_limbHitFraction
+                    + Random.insideUnitSphere * (mag * m_limbTangentialFraction),
+                    ForceMode.Impulse);
+            }
+
+            m_rb.WakeUp();
+            if (hit.Kind != SlapKind.Sweep)
+                m_rb.AddTorque(
+                    Vector3.Cross(Vector3.up, impulse / mag)
+                    * (hit.Strength * m_hitSpinTorque),
+                    ForceMode.Impulse);
+        }
+
+        /// <summary>Weight pass B: lazily builds the one cached array of
+        /// every Rigidbody under this NPC except the root — the 8 jointed
+        /// limb bodies from NpcBodyBuilder.AddLimbs (the head child has no
+        /// rigidbody and inherits the flail through its jointed
+        /// neighbours). Built once at the first accepted hit or death,
+        /// never per frame or per hit.</summary>
+        private Rigidbody[] GetLimbRbs()
+        {
+            if (!m_limbCacheBuilt)
+            {
+                m_limbCacheBuilt = true;
+                var found = new List<Rigidbody>(GetComponentsInChildren<Rigidbody>());
+                found.Remove(m_rb);
+                m_limbRbs = found.ToArray();
+            }
+            return m_limbRbs;
+        }
+
         /// <summary>Lazily caches the Rigidbody of the "Arm_R_Lower" limb
         /// that NpcBodyBuilder.AddLimbs builds under the NPC root (same
         /// null-safe lookup as the upper arm).</summary>
@@ -1537,6 +1629,21 @@ namespace WhackySlappy.NPC
             // matter because the Dead state skips every transition check.
             m_hangTimer = 0f;
             m_tumbleTimer = 0f;
+
+            // Weight pass B: Dead runs no upright/facing/wander/strike
+            // force (verified: the FixedUpdate switch only despawn-checks
+            // for State.Dead), but a standing corpse still coasts upright
+            // on the killing slap's momentum. One-time downward impulse on
+            // the root plus waking every limb folds the ragdoll down right
+            // away. Die() is guarded by m_isDead, so this lands exactly
+            // once per NPC.
+            m_rb.WakeUp();
+            m_rb.AddForce(
+                Vector3.down * m_deathSlumpImpulse, ForceMode.Impulse);
+            Rigidbody[] corpseLimbs = GetLimbRbs();
+            for (int i = 0; i < corpseLimbs.Length; i++)
+                if (corpseLimbs[i] != null)
+                    corpseLimbs[i].WakeUp();
 
             // Dead is final: NpcFace ignores later requests; ResetToIdle
             // (recycle) clears it. m_face is a MonoBehaviour: explicit
