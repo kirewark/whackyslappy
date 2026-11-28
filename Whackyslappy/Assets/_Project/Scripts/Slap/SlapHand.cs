@@ -40,9 +40,13 @@ namespace WhackySlappy.Slap
         // Tuning: directional slap (Pass 2, Phase 2)
         // -------------------------------------------------------------------------
 
-        /// <summary>Drag below this many accumulated mouse-delta pixels
-        /// counts as a plain click and does the default swing.</summary>
+        /// <summary>Release with a drag below this many accumulated mouse-delta
+        /// pixels cancels the aim (no swing); only real drags start a swing.</summary>
         [SerializeField] private float m_minDragPixels = 10f;
+
+        /// <summary>Holds shorter than this never swing, even with mouse
+        /// motion: an accidental tap always cancels instead of attacking.</summary>
+        [SerializeField] private float m_minHoldSeconds = 0.12f;
 
         /// <summary>Pull-back distance (m, camera space) used by the
         /// m_strikeAlongDrag wind-up. The default slingshot preview uses
@@ -185,6 +189,7 @@ namespace WhackySlappy.Slap
 
         // Directional-slap state (reset when a swing starts).
         private bool m_aiming;                      // LMB held, accumulating drag
+        private float m_pressTime;                  // unscaledTime of the press (hold gate)
         private bool m_directional;                 // current swing is a directional one
         private Vector3 m_aimStartLocal;            // wind-up target, camera-local
         private Vector3 m_dirStrikeLocal;           // strike-end target, camera-local
@@ -490,15 +495,16 @@ namespace WhackySlappy.Slap
 
         private void Update()
         {
-            // Press starts an aim hold instead of an instant swing. Release
-            // decides: a tiny drag swings exactly like a plain click did
-            // before; a real drag swings along the drag direction.
+            // Press starts an aim hold; the attack is hold-and-drag only.
+            // Release decides: a real drag swings along the drag
+            // direction; a tiny drag or a too-short hold cancels to rest.
             if (m_phase == SwingPhase.Idle && InputReader != null &&
                 Time.time - m_swingStartTime >= m_cooldown)
             {
                 if (InputReader.SlapPressed && !m_aiming)
                 {
                     m_aiming = true;
+                    m_pressTime = Time.unscaledTime; // hold-time gate
                     InputReader.ResetAim();
                     // Fresh drag strike window: clear the drag dedupe and
                     // re-hit cooldown, and re-capture the hand position so
@@ -520,10 +526,18 @@ namespace WhackySlappy.Slap
                         Player.LookSuppressed = false;
 
                     Vector2 aim = InputReader.ConsumeAim();
-                    if (aim.magnitude < m_minDragPixels)
-                        StartSwing();
-                    else
+                    if (aim.magnitude >= m_minDragPixels &&
+                        Time.unscaledTime - m_pressTime >= m_minHoldSeconds)
+                    {
                         StartDirectionalSwing(aim);
+                        return;
+                    }
+                    // Cancelled tap (or too-short hold): no swing at all.
+                    // The preview may have nudged the hand off rest and
+                    // nothing else resets the Idle pose, so snap it back
+                    // to rest + identity here.
+                    transform.localPosition = m_restPosition;
+                    transform.localRotation = Quaternion.identity;
                     return;
                 }
 
@@ -531,8 +545,8 @@ namespace WhackySlappy.Slap
                 // follows the mouse pull (left = left, up = up) and rolls
                 // so its top edge leans toward the pulled side, making the
                 // slingshot direction visible before release. A near-zero
-                // drag keeps the hand at rest with no roll, so a plain
-                // click looks exactly like the default swing.
+                // drag keeps the hand at rest with no roll, and a release
+                // below the threshold cancels (snapped back to rest above).
                 if (m_aiming)
                 {
                     Vector2 aimVec = InputReader.AimDelta;
