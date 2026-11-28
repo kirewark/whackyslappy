@@ -1,0 +1,6 @@
+﻿<Solution>
+  <Project Path="WhackySlappy.csproj" />
+  <Project Path="WhackySlappy.Tests.EditMode.csproj" />
+  <Project Path="WhackySlappy.Editor.csproj" />
+  <Project Path="WhackySlappy.Tests.PlayMode.csproj" />
+</Solution>
