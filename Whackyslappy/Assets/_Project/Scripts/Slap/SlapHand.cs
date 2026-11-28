@@ -18,6 +18,10 @@ namespace WhackySlappy.Slap
         [SerializeField] private float m_strikeDuration = 0.12f;
         [SerializeField] private float m_recoverDuration = 0.20f;
         [SerializeField] private float m_sweepRadius = 0.45f;
+
+        // Contact point refined to the collider surface nearest the hand.
+        [SerializeField] private bool m_contactRefine = true;
+
         [SerializeField] private float m_forceMultiplier = 1.5f;
         [SerializeField] private float m_maxImpulse = 30f;
 
@@ -56,6 +60,9 @@ namespace WhackySlappy.Slap
         /// <summary>Weight of the strike direction added to the impulse
         /// direction of a directional swing.</summary>
         [SerializeField] private float m_directionalBias = 0.8f;
+
+        // Upward-swing launch bonus on impulse.y after the clamp; 0 = off.
+        [SerializeField] private float m_upSwingLaunch = 0.6f;
 
         /// <summary>When true, the strike travels along the drag direction
         /// (and its wind-up sits opposite the drag, through the rest point).
@@ -346,6 +353,10 @@ namespace WhackySlappy.Slap
                             rawMagnitude, m_minImpulse, m_maxImpulse);
                         impulse = dir * impulseMag;
 
+                        float upDot = Mathf.Max(0f,
+                            Vector3.Dot(handVelocity.normalized, Vector3.up));
+                        impulse += Vector3.up * (impulseMag * upDot * m_upSwingLaunch);
+
                         // Plan B3: log hand speed and impulse for tuning.
                         if (m_debugLog)
                             Debug.Log(
@@ -353,25 +364,27 @@ namespace WhackySlappy.Slap
                             + $"strength={strength:F2}");
                     }
 
-                    rb.AddForceAtPosition(impulse, kvp.Value, ForceMode.Impulse);
+                    Vector3 contactPoint = RefineContactPoint(kvp.Key, kvp.Value, cur);
+
+                    rb.AddForceAtPosition(impulse, contactPoint, ForceMode.Impulse);
                     // NPC colliders are child GameObjects; the ISlappable
                     // sits on the Rigidbody's root GO (same lookup as
                     // LegSweep).
                     var slappable = rb.GetComponent<ISlappable>();
                     if (slappable != null)
                     {
-                        var hit = new SlapHitInfo(kvp.Value, impulse, SlapKind.Slap, strength);
+                        var hit = new SlapHitInfo(contactPoint, impulse, SlapKind.Slap, strength);
                         slappable.OnHit(in hit);
                     }
 
-                    m_lastHitPoint = kvp.Value;
+                    m_lastHitPoint = contactPoint;
                     m_lastHitImpulse = impulse;
                     m_lastHitTime = Time.time;
 
                     // Feed impact strength into audio and visual feedback.
                     // Audio strength is floored at 0.25 so the softest hits
                     // are not silent; HitFeedback floors strength itself.
-                    SlapAudio.Play(kvp.Value, Mathf.Max(0.25f, strength));
+                    SlapAudio.Play(contactPoint, Mathf.Max(0.25f, strength));
                     HitFeedback.Trigger(strength);
                 }
             }
@@ -475,26 +488,43 @@ namespace WhackySlappy.Slap
                     * SillyPhysics.ImpulseMultiplier;
                 Vector3 dragImpulse = dir * impulseMag;
 
+                // Upward-swing launch bonus, same rule as the swing path.
+                float dragUpDot = Mathf.Max(0f,
+                    Vector3.Dot(handVelocity.normalized, Vector3.up));
+                dragImpulse += Vector3.up * (impulseMag * dragUpDot * m_upSwingLaunch);
+
+                Vector3 contactPoint = RefineContactPoint(kvp.Key, kvp.Value, cur);
+
                 if (m_debugLog)
                     Debug.Log(
                         $"DragHit: handSpeed={handSpeed:F1} m/s, impulseMag={impulseMag:F1}, "
                         + $"strength={strength:F2}");
 
-                rb.AddForceAtPosition(dragImpulse, kvp.Value, ForceMode.Impulse);
+                rb.AddForceAtPosition(dragImpulse, contactPoint, ForceMode.Impulse);
                 var slappable = rb.GetComponent<ISlappable>();
                 if (slappable != null)
                 {
-                    var hit = new SlapHitInfo(kvp.Value, dragImpulse, SlapKind.Slap, strength);
+                    var hit = new SlapHitInfo(contactPoint, dragImpulse, SlapKind.Slap, strength);
                     slappable.OnHit(in hit);
                 }
 
-                m_lastHitPoint = kvp.Value;
+                m_lastHitPoint = contactPoint;
                 m_lastHitImpulse = dragImpulse;
                 m_lastHitTime = now;
 
-                SlapAudio.Play(kvp.Value, strength);
+                SlapAudio.Play(contactPoint, strength);
                 HitFeedback.Trigger(strength);
             }
+        }
+
+        /// <summary>Snaps a sweep contact point to the collider surface
+        /// nearest the hand centre so force and SlapHitInfo.Point track the
+        /// real strike spot; MeshCollider points pass through unchanged.</summary>
+        private Vector3 RefineContactPoint(Collider col, Vector3 point, Vector3 handCentre)
+        {
+            if (!m_contactRefine || col is MeshCollider)
+                return point;
+            return col.ClosestPoint(handCentre);
         }
 
         private void Update()
