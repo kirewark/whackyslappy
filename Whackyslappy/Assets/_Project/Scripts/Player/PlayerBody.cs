@@ -29,18 +29,14 @@ namespace WhackySlappy.Player
 
         /// <summary>Hip pivot of the right leg, for a later task.</summary>
         public Transform RightLegRoot { get; private set; }
+        private Material m_limbMat;
+        private Renderer[] m_rightLegRenderers;
 
         private void Awake()
         {
             Material bodyMat = DefaultLitMaterial.Create();
             if (bodyMat != null) bodyMat.color = m_bodyColor;
-            Material limbMat = DefaultLitMaterial.Create();
-            if (limbMat != null)
-            {
-                Color c = m_bodyColor;
-                limbMat.color = new Color(c.r * 1.15f + 0.05f,
-                    c.g * 1.15f + 0.05f, c.b * 1.15f + 0.05f, c.a);
-            }
+            Material limbMat = GetLimbMaterial();
             // NPC hips sit 0.8 m up; derived from the shared leg constants
             // so the lower capsules land exactly on y = 0 (the feet).
             float legRootY = 2f * NpcBodyBuilder.LegLength - NpcBodyBuilder.Overlap;
@@ -54,7 +50,53 @@ namespace WhackySlappy.Player
             Renderer headRenderer = head.GetComponent<Renderer>();
             if (headRenderer != null) headRenderer.enabled = false;
             RightLegRoot = BuildLeg("Leg_R", NpcBodyBuilder.HipX, legRootY, limbMat);
+            m_rightLegRenderers = RightLegRoot.GetComponentsInChildren<Renderer>();
             BuildLeg("Leg_L", -NpcBodyBuilder.HipX, legRootY, limbMat);
+        }
+
+        /// <summary>Hides the standing right leg during a leg sweep and
+        /// restores it afterwards; renderers only, no collider changes.</summary>
+        public void SetRightLegVisible(bool visible)
+        {
+            if (m_rightLegRenderers == null)
+                return;
+            for (int i = 0; i < m_rightLegRenderers.Length; i++)
+                if (m_rightLegRenderers[i] != null)
+                    m_rightLegRenderers[i].enabled = visible;
+        }
+
+        /// <summary>Builds a copy of the NPC-style leg for the sweep visual:
+        /// root with the same two capsules (radius, length, colour) down its
+        /// local -Y, no colliders, shadows off, layer Player; the caller
+        /// parents and places it.</summary>
+        public GameObject CreateSweepLeg()
+        {
+            GameObject root = new GameObject("LegSweep_NpcLeg");
+            Vector3 legScale = new Vector3(2f * NpcBodyBuilder.LegRadius,
+                NpcBodyBuilder.LegLength * 0.5f, 2f * NpcBodyBuilder.LegRadius);
+            Material mat = GetLimbMaterial();
+            MakePart("SweepLeg_Upper", PrimitiveType.Capsule, root.transform,
+                new Vector3(0f, -NpcBodyBuilder.LegLength * 0.5f, 0f), legScale, mat);
+            MakePart("SweepLeg_Lower", PrimitiveType.Capsule, root.transform,
+                new Vector3(0f, -1.5f * NpcBodyBuilder.LegLength + NpcBodyBuilder.Overlap, 0f), legScale, mat);
+            return root;
+        }
+
+        /// <summary>Limb tint material, lazily created so external callers
+        /// get the same colour as the standing legs.</summary>
+        private Material GetLimbMaterial()
+        {
+            if (m_limbMat == null)
+            {
+                m_limbMat = DefaultLitMaterial.Create();
+                if (m_limbMat != null)
+                {
+                    Color c = m_bodyColor;
+                    m_limbMat.color = new Color(c.r * 1.15f + 0.05f,
+                        c.g * 1.15f + 0.05f, c.b * 1.15f + 0.05f, c.a);
+                }
+            }
+            return m_limbMat;
         }
 
         /// <summary>Leg pivot at the NPC hip offset with NPC capsules.</summary>
