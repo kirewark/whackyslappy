@@ -28,12 +28,14 @@ namespace WhackySlappy.Core
         // dome: the earlier emission-keyword dome created a shader
         // variant WebGL builds strip, rendering BLACK over the clear
         // colour.
-        private static readonly Color SkyColor = new Color(0.50f, 0.75f, 0.98f);
-        private static readonly Color HorizonHaze = new Color(0.62f, 0.82f, 0.98f);
-        private static readonly Color AmbientSky = new Color(0.6f, 0.8f, 1.0f);
-        private static readonly Color AmbientEquator = new Color(0.8f, 0.8f, 0.7f);
-        private static readonly Color AmbientGround = new Color(0.4f, 0.35f, 0.3f);
-        private static readonly Color SunColor = new Color(1.0f, 0.95f, 0.85f);
+        // Subdued sun palette: overcast-ish blue-grey sky, hazy horizon,
+        // softer ambient and a dimmer warm sun (was a bright cloudless day).
+        private static readonly Color SkyColor = new Color(0.58f, 0.68f, 0.80f);
+        private static readonly Color HorizonHaze = new Color(0.66f, 0.74f, 0.82f);
+        private static readonly Color AmbientSky = new Color(0.46f, 0.56f, 0.70f);
+        private static readonly Color AmbientEquator = new Color(0.55f, 0.55f, 0.50f);
+        private static readonly Color AmbientGround = new Color(0.28f, 0.25f, 0.22f);
+        private static readonly Color SunColor = new Color(1.0f, 0.92f, 0.80f);
         private static readonly Color GrassLightGreen = new Color(0.45f, 0.70f, 0.30f);
         private static readonly Color GrassDarkGreen = new Color(0.38f, 0.62f, 0.26f);
         private static readonly Color FleckLight = new Color(0.55f, 0.78f, 0.35f);
@@ -41,13 +43,16 @@ namespace WhackySlappy.Core
         private static readonly Color MeadowColor = new Color(0.36f, 0.58f, 0.26f);
         private static readonly Color PathColor = new Color(0.60f, 0.45f, 0.28f);
 
-        private const float FogStart = 40f;
-        private const float FogEnd = 160f;
+        // Fog is back but close in: starts just past the play area and is
+        // fully opaque by 85 m, so horizon objects beyond the fog end
+        // simply melt into the haze instead of showing hard edges.
+        private const float FogStart = 14f;
+        private const float FogEnd = 85f;
         // Far plane for every camera: the 400 m ground plane's corners
         // (~283 m from the origin) sit well inside it, and linear fog
-        // (opaque by 160 m) hides anything past that anyway.
+        // (opaque by 85 m) hides anything past that anyway.
         private const float CameraFarPlane = 500f;
-        private const float SunIntensity = 1.1f;
+        private const float SunIntensity = 0.85f;
         private const float GroundPlaneSize = 400f;
         // One grass texture tile spans 8 m of world, so the light/dark
         // mowing bands baked two-per-tile are about 4 m wide in world space.
@@ -251,7 +256,7 @@ namespace WhackySlappy.Core
         /// tiled grass inside the arena reads as a mown lawn). Visual only:
         /// its collider is removed and its top face sits just under the
         /// floor top (y = -0.05). 400 m wide so its far edge sits well
-        /// beyond the fog end (160 m) and never shows a hard line.
+        /// beyond the fog end (85 m) and never shows a hard line.
         /// </summary>
         private static void CreateGroundPlane(GameObject arenaRoot)
         {
