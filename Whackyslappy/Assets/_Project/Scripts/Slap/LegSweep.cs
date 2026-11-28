@@ -26,6 +26,7 @@ namespace WhackySlappy.Slap
         [SerializeField] private float m_sweepImpulse = 9f;    // tangential impulse to the feet (knockdown-strong)
         [SerializeField] private float m_upBias = 1.0f;        // small upward impulse component
         [SerializeField] private float m_strength = 0.7f;      // feedback scale for a sweep hit
+        [SerializeField] private float m_legUpTilt = 0.12f;    // sweep leg tilt-up (added to level dir)
 
         /// <summary>Set by SlapBootstrap after AddComponent, read in Update.</summary>
         public WhackySlappy.Player.PlayerInputReader InputReader { get; set; }
@@ -42,6 +43,8 @@ namespace WhackySlappy.Slap
         private CharacterController m_playerCC;
         private Transform m_playerTf;
         private GameObject m_legVisual;
+        private WhackySlappy.Player.PlayerBody m_body;
+        private bool m_usesNpcLeg;
         private float m_lastSweepHitTime = -1f;
         private Vector3 m_lastSweepPoint;
         private Vector3 m_lastSweepImpulse;
@@ -52,6 +55,7 @@ namespace WhackySlappy.Slap
             // so the parent chain reaches the CharacterController.
             m_playerCC = GetComponentInParent<CharacterController>();
             m_playerTf = m_playerCC != null ? m_playerCC.transform : transform;
+            m_body = GetComponentInParent<WhackySlappy.Player.PlayerBody>();
             BuildLegVisual();
             if (m_legVisual != null)
                 m_legVisual.SetActive(false);
@@ -64,6 +68,8 @@ namespace WhackySlappy.Slap
             m_phase = SweepPhase.Idle;
             m_sweepStartTime = -1000f;
             m_hitThisSweep.Clear();
+            if (m_body != null)
+                m_body.SetRightLegVisible(true);
             if (m_legVisual != null)
                 m_legVisual.SetActive(false);
         }
@@ -86,6 +92,8 @@ namespace WhackySlappy.Slap
             if (t >= 1f)
             {
                 m_phase = SweepPhase.Idle;
+                if (m_body != null)
+                    m_body.SetRightLegVisible(true);
                 if (m_legVisual != null)
                     m_legVisual.SetActive(false);
                 return;
@@ -162,6 +170,8 @@ namespace WhackySlappy.Slap
             if (m_legVisual != null)
             {
                 m_legVisual.SetActive(true);
+                if (m_body != null)
+                    m_body.SetRightLegVisible(false);
                 MoveLegVisual(0f);
             }
         }
@@ -207,7 +217,7 @@ namespace WhackySlappy.Slap
         }
 
         /// <summary>
-        /// Places the flat capsule visual on the arc at the current sweep angle.
+        /// Places the sweep leg on the arc at the current sweep angle.
         /// Set in world space so camera pitch on the parent rig does not tilt it.
         /// </summary>
         private void MoveLegVisual(float t)
@@ -216,16 +226,31 @@ namespace WhackySlappy.Slap
                 return;
             float angle = Mathf.SmoothStep(m_arcStartDeg, m_arcEndDeg, t);
             Vector3 dir = Quaternion.AngleAxis(angle, Vector3.up) * m_flatForward;
+            if (m_usesNpcLeg)
+            {
+                Vector3 aim = (dir + Vector3.up * m_legUpTilt).normalized;
+                m_legVisual.transform.SetPositionAndRotation(
+                    m_anchor, Quaternion.FromToRotation(Vector3.down, aim));
+                return;
+            }
             Vector3 center = m_anchor + dir * (m_range * 0.5f);
             m_legVisual.transform.SetPositionAndRotation(center, Quaternion.LookRotation(dir, Vector3.up));
         }
 
         /// <summary>
-        /// Low flat capsule shown only during the sweep. Collider removed so it
-        /// never physically pushes NPCs; detection is the casts in FixedUpdate.
+        /// Builds the sweep visual: PlayerBody's real NPC-style leg when
+        /// present, the old flat capsule as fallback otherwise. No collider
+        /// on it: detection is the casts, as before.
         /// </summary>
         private void BuildLegVisual()
         {
+            if (m_body != null)
+            {
+                m_legVisual = m_body.CreateSweepLeg();
+                m_legVisual.transform.SetParent(m_playerTf, false);
+                m_usesNpcLeg = true;
+                return;
+            }
             var leg = GameObject.CreatePrimitive(PrimitiveType.Capsule);
             leg.name = "LegSweepVisual";
             Object.Destroy(leg.GetComponent<Collider>());
