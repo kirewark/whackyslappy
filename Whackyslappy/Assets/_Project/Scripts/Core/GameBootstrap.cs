@@ -249,6 +249,8 @@ namespace WhackySlappy.Core
             }
             if (arenaRoot.GetComponent<ScoreHud>() == null) // the score HUD lives on the arena root too
                 arenaRoot.AddComponent<ScoreHud>();
+            if (arenaRoot.GetComponent<PauseOverlay>() == null) // click-to-play / pause screen
+                arenaRoot.AddComponent<PauseOverlay>();
         }
 
         /// <summary>

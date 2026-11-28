@@ -31,6 +31,9 @@ namespace WhackySlappy.Core
         private const float kSampleInterval = 0.25f;
         private const int kSampleCount = 14; // 14 * 0.25 s = 3.5 s of state lines.
 
+        /// <summary>True once a shot stages; PauseOverlay hides itself while set.</summary>
+        public static bool Active { get; private set; }
+
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         public static void Init()
         {
@@ -134,6 +137,7 @@ namespace WhackySlappy.Core
                 var reader = fps.GetComponent<PlayerInputReader>();
                 if (reader != null)
                     reader.enabled = false;
+                Active = true;
                 Cursor.lockState = CursorLockMode.None;
                 Cursor.visible = true;
 
